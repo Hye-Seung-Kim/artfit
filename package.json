@@ -1,0 +1,19 @@
+{
+  "name": "artfit",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["geometry", "server", "web"],
+  "scripts": {
+    "test": "npm run test -w geometry && npm run test -w server",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "dev": "concurrently -k -n server,web \"npm run dev -w server\" \"npm run dev -w web\"",
+    "typecheck": "tsc -p geometry && tsc -p server --noEmit && tsc -p web --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

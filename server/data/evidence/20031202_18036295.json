@@ -1,0 +1,48 @@
+{
+  "spaceId": "20031202:18036295",
+  "evidenceVersion": 1,
+  "match": {
+    "modelId": "BoqDzrD8JLh",
+    "floorId": "tsmq1wak12rhgn0mawksxcwcd",
+    "regionId": "613htqkzf66zz7hf7n8kzszed",
+    "verified": false,
+    "evidenceIds": [
+      "ev-model-name"
+    ],
+    "reviewedBy": null,
+    "reviewedAt": null,
+    "notes": [
+      "Proposed from model name \"6003 Bellaire Blvd - Suite I\""
+    ]
+  },
+  "entries": [
+    {
+      "id": "ev-model-name",
+      "claim": "model_match",
+      "value": "proposed",
+      "sourceType": "model_api_metadata",
+      "sourceRef": "matterport model BoqDzrD8JLh name \"6003 Bellaire Blvd - Suite I\"",
+      "observedAt": null,
+      "scope": "model BoqDzrD8JLh, floor tsmq1wak12rhgn0mawksxcwcd, room 613htqkzf66zz7hf7n8kzszed",
+      "note": "Model name identifies the suite; model is listed for this property in commercial-properties.csv. Main room 1975 sq ft (Matterport estimate). Proposed only — a reviewer must confirm the exact suite region in the scan.",
+      "reviewedBy": null,
+      "reviewedAt": null,
+      "limitations": [
+        "Model name is provider metadata, not a dimensioned plan",
+        "Region boundary not yet confirmed by a reviewer"
+      ]
+    },
+    {
+      "id": "ev-model-api-geometry",
+      "claim": "measurement",
+      "value": "room_boundary_draft",
+      "sourceType": "model_api_metadata",
+      "sourceRef": "Model API rooms[613htqkzf66zz7hf7n8kzszed].boundary",
+      "observedAt": null,
+      "scope": "room 613htqkzf66zz7hf7n8kzszed",
+      "note": "Processed by Matterport 2026-07-10T16:50:03Z (processing time, not capture time).",
+      "reviewedBy": null,
+      "reviewedAt": null
+    }
+  ]
+}

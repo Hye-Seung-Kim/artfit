@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.env
+!.env.example
+server/data/derived/
+costar-hackathon-kit/
+server/data/snapshots/
+.DS_Store
+*.log
+web/public/bundle/

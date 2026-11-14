@@ -1,0 +1,333 @@
+{
+  "annotationId": "ann-37287981_19233219",
+  "spaceId": "37287981:19233219",
+  "modelId": "yHo2cBkCvXy",
+  "floorId": "tsmq1wak12rhgn0mawksxcwcd",
+  "regionId": "613htqkzf66zz7hf7n8kzszed",
+  "coordinateSystem": "showcase_sdk_xz_m",
+  "floorElevationY": 0,
+  "floor": [
+    {
+      "x": -0.8103,
+      "z": -6.7534
+    },
+    {
+      "x": 17.038,
+      "z": -6.7341
+    },
+    {
+      "x": 17.03,
+      "z": 0.6578
+    },
+    {
+      "x": 4.5185,
+      "z": 0.6443
+    },
+    {
+      "x": 4.5201,
+      "z": -0.8888
+    },
+    {
+      "x": 2.89,
+      "z": -0.8906
+    },
+    {
+      "x": 2.8919,
+      "z": -2.6441
+    },
+    {
+      "x": -0.8148,
+      "z": -2.6481
+    }
+  ],
+  "obstacles": [
+    {
+      "id": "entrance-1",
+      "label": "Doorway 0.78 m wide",
+      "category": "entrance_zone",
+      "shape": {
+        "kind": "polygon",
+        "poly": [
+          {
+            "x": -0.4965,
+            "z": -3.8477
+          },
+          {
+            "x": 0.4839,
+            "z": -3.8467
+          },
+          {
+            "x": 0.4825,
+            "z": -2.5917
+          },
+          {
+            "x": -0.4979,
+            "z": -2.5927
+          }
+        ]
+      },
+      "mobility": "permanent",
+      "evidenceIds": [
+        "ev-model-api-geometry"
+      ],
+      "removalPermissionEvidenceIds": [],
+      "removalCompletionEvidenceIds": [],
+      "reviewNote": "Design-review assumption: doorway width + 0.1 m each side, 1.2 m deep path zone. Not a code/accessibility determination.",
+      "heightM": 2.07730233669281
+    },
+    {
+      "id": "entrance-2",
+      "label": "Doorway 2.72 m wide",
+      "category": "entrance_zone",
+      "shape": {
+        "kind": "polygon",
+        "poly": [
+          {
+            "x": -0.8941,
+            "z": -3.2717
+          },
+          {
+            "x": -0.8909,
+            "z": -6.1894
+          },
+          {
+            "x": 0.3891,
+            "z": -6.188
+          },
+          {
+            "x": 0.3859,
+            "z": -3.2704
+          }
+        ]
+      },
+      "mobility": "permanent",
+      "evidenceIds": [
+        "ev-model-api-geometry"
+      ],
+      "removalPermissionEvidenceIds": [],
+      "removalCompletionEvidenceIds": [],
+      "reviewNote": "Design-review assumption: doorway width + 0.1 m each side, 1.2 m deep path zone. Not a code/accessibility determination.",
+      "heightM": 2.032
+    },
+    {
+      "id": "entrance-3",
+      "label": "Doorway 0.88 m wide",
+      "category": "entrance_zone",
+      "shape": {
+        "kind": "polygon",
+        "poly": [
+          {
+            "x": 2.8353,
+            "z": -1.1806
+          },
+          {
+            "x": 2.8365,
+            "z": -2.2647
+          },
+          {
+            "x": 4.0915,
+            "z": -2.2633
+          },
+          {
+            "x": 4.0903,
+            "z": -1.1793
+          }
+        ]
+      },
+      "mobility": "permanent",
+      "evidenceIds": [
+        "ev-model-api-geometry"
+      ],
+      "removalPermissionEvidenceIds": [],
+      "removalCompletionEvidenceIds": [],
+      "reviewNote": "Design-review assumption: doorway width + 0.1 m each side, 1.2 m deep path zone. Not a code/accessibility determination.",
+      "heightM": 2.067754626274109
+    },
+    {
+      "id": "entrance-4",
+      "label": "Doorway 0.63 m wide",
+      "category": "entrance_zone",
+      "shape": {
+        "kind": "polygon",
+        "poly": [
+          {
+            "x": 3.1513,
+            "z": -2.0903
+          },
+          {
+            "x": 3.9823,
+            "z": -2.0894
+          },
+          {
+            "x": 3.9809,
+            "z": -0.8344
+          },
+          {
+            "x": 3.15,
+            "z": -0.8353
+          }
+        ]
+      },
+      "mobility": "permanent",
+      "evidenceIds": [
+        "ev-model-api-geometry"
+      ],
+      "removalPermissionEvidenceIds": [],
+      "removalCompletionEvidenceIds": [],
+      "reviewNote": "Design-review assumption: doorway width + 0.1 m each side, 1.2 m deep path zone. Not a code/accessibility determination.",
+      "heightM": 2.0799028277397156
+    }
+  ],
+  "walls": [
+    {
+      "a": {
+        "x": -0.8948233156357551,
+        "z": -2.593175587911325
+      },
+      "b": {
+        "x": 2.8368619597656393,
+        "z": -2.5891350762039047
+      },
+      "thicknessM": 0.11
+    },
+    {
+      "a": {
+        "x": -0.8984881706686636,
+        "z": 0.7183054633667247
+      },
+      "b": {
+        "x": -0.8948233156357551,
+        "z": -2.593175587911325
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": -0.8948233156357551,
+        "z": -2.593175587911325
+      },
+      "b": {
+        "x": -0.8902199575754443,
+        "z": -6.83345870863658
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": 17.118083401742908,
+        "z": -6.814036203919974
+      },
+      "b": {
+        "x": 17.109938476221952,
+        "z": 0.7379119100641949
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": 4.465079261112786,
+        "z": -0.8339034798450112
+      },
+      "b": {
+        "x": 4.463394990238687,
+        "z": 0.7242756527941697
+      },
+      "thicknessM": 0.11
+    },
+    {
+      "a": {
+        "x": 17.118083401742908,
+        "z": -6.814036203919974
+      },
+      "b": {
+        "x": -0.8902199575754443,
+        "z": -6.83345870863658
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": 2.834964607215572,
+        "z": -0.835667554966449
+      },
+      "b": {
+        "x": 2.8332591067089226,
+        "z": 0.7224462322695535
+      },
+      "thicknessM": 0.11
+    },
+    {
+      "a": {
+        "x": 2.8332591067089226,
+        "z": 0.7224462322695535
+      },
+      "b": {
+        "x": -0.8984881706686636,
+        "z": 0.7183054633667247
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": 2.8332591067089226,
+        "z": 0.7224462322695535
+      },
+      "b": {
+        "x": 4.463394990238687,
+        "z": 0.7242756527941697
+      },
+      "thicknessM": 0.16
+    },
+    {
+      "a": {
+        "x": 2.834964607215572,
+        "z": -0.835667554966449
+      },
+      "b": {
+        "x": 2.8368619597656393,
+        "z": -2.5891350762039047
+      },
+      "thicknessM": 0.11
+    },
+    {
+      "a": {
+        "x": 2.834964607215572,
+        "z": -0.835667554966449
+      },
+      "b": {
+        "x": 4.465079261112786,
+        "z": -0.8339034798450112
+      },
+      "thicknessM": 0.11
+    },
+    {
+      "a": {
+        "x": 17.109938476221952,
+        "z": 0.7379119100641949
+      },
+      "b": {
+        "x": 4.463394990238687,
+        "z": 0.7242756527941697
+      },
+      "thicknessM": 0.16
+    }
+  ],
+  "ceilingHeightM": null,
+  "ceilingEvidenceIds": [],
+  "scaleCheck": null,
+  "obstacleCoverage": "partial",
+  "coverageNotes": [
+    "Draft built from Matterport Model API room boundary (wall centerlines inset by half wall thickness).",
+    "No columns, fixtures or furniture traced yet; reviewer must inspect the scan and add any blockers.",
+    "Model API (x,y) \u2192 Showcase (x,-y) transform checked 2026-11-14: every Showcase SDK Sweep position equals the Model API pano position under this transform (13\u201314 sweeps per model, 0.01 m display precision)."
+  ],
+  "annotationVerified": false,
+  "annotationMethod": "model_api_assisted_draft",
+  "annotatedBy": "artfit draft script",
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "version": 1,
+  "annotatedAt": "2026-11-14T03:20:13.157Z",
+  "scanCapturedAt": null,
+  "scanProcessedAt": "2026-07-10T17:31:36Z"
+}

@@ -1,0 +1,15 @@
+import { ScanCache } from "@artfit/geometry";
+import { loadKit } from "../src/adapters/costarKit.js";
+import { RunState, runTool } from "../src/agent/loop.js";
+const kit = await loadKit(process.env.COSTAR_KIT_DIR!, "2026-11-10");
+const ctx = { kit, cache: new ScanCache(), requestId: "t" };
+const s = new RunState(kit);
+const brief = { city: "Houston", exhibitionStart: "2027-03-05", exhibitionEnd: "2027-03-21", budget: null, artwork: { widthM: 4, depthM: 3, heightM: 2.4 }, preferredClearanceM: 1.5, minimumClearanceM: 1, spaceUsePreferences: ["Flex"] };
+runTool("search_spaces", { brief }, s, ctx);
+const tryIt = (label: string, f: () => unknown) => { try { f(); console.log(label, "→ allowed"); } catch (e) { console.log(label, "→ rejected:", (e as Error).message.slice(0, 90)); } };
+tryIt("relax clearance via new search", () => runTool("search_spaces", { brief: { ...brief, preferredClearanceM: 0.5 } }, s, ctx));
+tryIt("shrink artwork via new search", () => runTool("search_spaces", { brief: { ...brief, artwork: { widthM: 2, depthM: 2, heightM: 2 } } }, s, ctx));
+tryIt("evaluate at invented 0.8 m", () => runTool("evaluate_placement", { spaceId: "37287981:19233219", requiredClearanceM: 0.8 }, s, ctx));
+tryIt("evaluate at user's 1.5 m", () => runTool("evaluate_placement", { spaceId: "37287981:19233219", requiredClearanceM: 1.5 }, s, ctx));
+tryIt("inspect unknown id", () => runTool("inspect_space", { spaceId: "nope" }, s, ctx));
+console.log("outcome", s.outcome());
