@@ -33,6 +33,10 @@ export interface EditorApi {
 
 const newArtworkId = () => `art-${Math.random().toString(36).slice(2, 8)}`;
 
+type ArtworkProps = Pick<ArtworkEditState, "widthM" | "depthM" | "heightM" | "baseElevationM" | "color" | "material">;
+const pickArtwork = (s: ArtworkEditState): ArtworkProps => ({ widthM: s.widthM, depthM: s.depthM, heightM: s.heightM, baseElevationM: s.baseElevationM, color: s.color, material: s.material });
+const sameArtwork = (a: ArtworkEditState, b: ArtworkProps) => (Object.keys(b) as (keyof ArtworkProps)[]).every((k) => a[k] === b[k]);
+
 /** Session-scoped editor. Each space keeps its own history; switching back restores it. */
 export function useArtworkEditor(spaceId: string, seed: Omit<ArtworkEditState, "spaceId" | "artworkId" | "version" | "mode" | "pose">): EditorApi {
   const sessions = useRef(new Map<string, EditHistory>());
@@ -46,11 +50,22 @@ export function useArtworkEditor(spaceId: string, seed: Omit<ArtworkEditState, "
   const activeSpace = useRef(spaceId);
   activeSpace.current = spaceId; // live value, read when a late response arrives
 
+  // The artwork (size, lift, finish) is the same object in every space; only its position/rotation is per space.
+  // Remember the artwork as last shown so switching spaces carries it over instead of resetting it.
+  const lastArtwork = useRef<ArtworkProps | null>(null);
+  const shownSpace = useRef<string | null>(null);
   if (!sessions.current.has(spaceId)) {
-    // A new space starts a new session. Artwork properties carry over; the pose is space-specific.
-    sessions.current.set(spaceId, createHistory({ ...seed, artworkId: artworkId.current, spaceId, mode: "auto_best", pose: null, version: 1 }));
+    sessions.current.set(spaceId, createHistory({ ...seed, ...(lastArtwork.current ?? {}), artworkId: artworkId.current, spaceId, mode: "auto_best", pose: null, version: 1 }));
+  } else if (shownSpace.current !== null && shownSpace.current !== spaceId && lastArtwork.current) {
+    const h = sessions.current.get(spaceId)!;
+    if (!sameArtwork(h.present.state, lastArtwork.current)) {
+      // Returning to a space after editing the artwork elsewhere: bring this space up to date (one undoable step).
+      sessions.current.set(spaceId, commit(h, { ...h.present.state, ...lastArtwork.current }, "Artwork matched to the other space", "history"));
+    }
   }
+  shownSpace.current = spaceId;
   const history = sessions.current.get(spaceId)!;
+  lastArtwork.current = pickArtwork(history.present.state);
   // State immediately before the most recent action (commit, undo, redo or reset), per space, for the before/after view.
   const beforeLast = useRef(new Map<string, ArtworkEditState>());
   const set = (h: EditHistory) => {
@@ -120,7 +135,7 @@ export function useArtworkEditor(spaceId: string, seed: Omit<ArtworkEditState, "
       const now = sessions.current.get(baseSpace)?.present.state;
       if (activeSpace.current !== baseSpace || (out.spaceId && out.spaceId !== baseSpace) || !now
         || (out.artworkId && now.artworkId !== out.artworkId) || now.version !== baseVersion || (out.baseVersion != null && out.baseVersion !== baseVersion)) {
-        setAi({ kind: "discarded", message, reason: "The artwork or space changed while Claude was working, so this answer was not applied." });
+        setAi({ kind: "discarded", message, reason: "The artwork or space changed while the AI was working, so this answer was skipped." });
         return;
       }
       if (!res.ok) { setAi({ kind: "failed", message, reason: out.error ?? `HTTP ${res.status}` }); return; }

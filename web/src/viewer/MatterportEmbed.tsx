@@ -101,7 +101,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   }, [modelId, attempt]);
 
   // Push every new pose into the live scene component (no reload).
-  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material]) : "none";
+  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material, overlay.model?.id ?? null, overlay.model?.override ?? null, overlay.photo?.id ?? null]) : "none";
   useEffect(() => {
     if (status.kind !== "playing") { onRenderStateRef.current?.(status.kind === "loading" ? `loading (${status.step})` : `unavailable: ${status.reason}`); return; }
     if (!compRef.current) { onRenderStateRef.current?.("scene object not ready"); return; }
@@ -150,7 +150,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
           </div>
         )}
       </div>
-      <div className="legend" style={{ alignItems: "center" }}>
+      <div className="legend scan-controls" style={{ alignItems: "center" }}>
         {status.kind === "playing" && <span className="badge fit">● Artwork placed in scan · {sweeps.length} viewpoints</span>}
         {status.kind === "loading" && <span className="badge info">Loading…</span>}
         {status.kind === "error" && <span className="badge conflict">{status.reason}</span>}

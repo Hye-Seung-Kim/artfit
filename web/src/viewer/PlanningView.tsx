@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { bbox, centroid, pointInPolygon, type Obstacle, type Polygon, type SpatialAnnotation, type Vec2 } from "@artfit/geometry";
 import type { Overlay } from "../workspace/overlay";
 import { buildHumanFigure, figurePlacement } from "./humanFigure";
+import { boxPose, buildModelGroup, disposeGroup, makeStudioEnvironment, photoTexture, type ArtworkPhoto, type ModelPart } from "./artworkModel";
 
 const COLORS: Record<Obstacle["category"], string> = {
   column: "#555c53", fixed_fixture: "#73796e", entrance_zone: "#d9a400", restricted: "#777f89",
@@ -115,21 +116,91 @@ export interface ViewerProps {
   finish?: { hex: string; material: "matte" | "satin" | "gloss" };
   conflict?: boolean;
   onViewRight?: (v: Vec2) => void;
+  /** Canvas area covered by floating workspace UI (px). */
+  viewInset?: ViewInset;
+  /** User-supplied 3D model (unit-sized geometry) drawn in place of the box, scaled to the artwork's W × H × D. */
+  model?: { id: string; parts: ModelPart[]; override: { hex: string; roughness: number } | null } | null;
+  /** Front photo applied to the box's front face (ignored when a 3D model is shown). */
+  photo?: ArtworkPhoto | null;
+  /** Identifies the space; its camera view is saved and restored when switching spaces. */
+  viewKey?: string;
 }
 
-function ResponsiveCamera({ x, z, span }: { x: number; z: number; span: number }) {
+/** The artwork's front photo on the box's front face (local +z side, W × H), centre-cropped to the face. */
+function PhotoFace({ corners, heightM, y, photo }: { corners: Vec2[]; heightM: number; y: number; photo: ArtworkPhoto }) {
+  const { cx, cz, w, d, yaw } = boxPose(corners);
+  const aspect = Math.round((w / heightM) * 100) / 100;
+  const tex = useMemo(() => photoTexture(THREE, photo, aspect), [photo, aspect]);
+  useEffect(() => () => tex.dispose(), [tex]);
+  return (
+    <group position={[cx, y, cz]} rotation={[0, yaw, 0]}>
+      <mesh position={[0, heightM / 2, d / 2 + 0.004]} scale={[w, heightM, 1]}>
+        <planeGeometry args={[1, 1]} />
+        <meshStandardMaterial map={tex} roughness={0.85} />
+      </mesh>
+    </group>
+  );
+}
+
+/** The imported model with its own materials, stretched to the artwork's outer box and placed on its pose. */
+function ModelArtwork({ corners, heightM, y, model, conflict }: { corners: Vec2[]; heightM: number; y: number; model: NonNullable<ViewerProps["model"]>; conflict: boolean }) {
+  const { gl } = useThree();
+  // Image-based lighting so metals show reflections instead of flat black (applied to the model only).
+  const env = useMemo(() => makeStudioEnvironment(THREE, gl), [gl]);
+  useEffect(() => () => env.dispose(), [env]);
+  const okey = model.override ? `${model.override.hex}:${model.override.roughness}` : "";
+  const group = useMemo(() => buildModelGroup(THREE, model.parts, { override: model.override, conflict, envMap: env, envIntensity: 1.8 }), [model.id, okey, conflict, env]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => disposeGroup(group), [group]);
+  const { cx, cz, w, d, yaw } = boxPose(corners);
+  return <primitive object={group} position={[cx, y, cz]} rotation={[0, yaw, 0]} scale={[w, heightM, d]} />;
+}
+
+/** Pixels of the canvas covered by floating UI; the room is framed inside what remains. */
+export interface ViewInset { l: number; r: number; t: number; b: number }
+
+/** Camera + orbit target per space, kept for the app session so switching A ↔ B returns to the same view. */
+const savedViews = new Map<string, { pos: THREE.Vector3; target: THREE.Vector3 }>();
+
+function ResponsiveCamera({ x, z, span, inset, viewKey }: { x: number; z: number; span: number; inset?: ViewInset; viewKey?: string }) {
   const { camera, size, invalidate } = useThree();
+  const controls = useThree((st) => st.controls) as any;
+  const { l = 0, r = 0, t = 0, b = 0 } = inset ?? {};
+  // Projection only (size / floating-panel inset): never moves the camera, so the user's orbit is kept.
   useEffect(() => {
-    // Preserve the full room on portrait canvases; don't reset the orbit on artwork edits.
-    const framing = Math.max(1, 1.1 / (size.width / Math.max(1, size.height)));
-    camera.position.set(x + span * .15 * framing, span * .85 * framing, z + span * .8 * framing);
-    camera.lookAt(x, 0, z);
+    if (size.width < 10 || size.height < 10) return; // hidden canvas
+    const cam = camera as THREE.PerspectiveCamera;
+    const fw = Math.max(240, size.width - l - r), fh = Math.max(180, size.height - t - b);
+    const insetOn = l + r + t + b > 0 && fw < size.width + 1;
+    if (insetOn) { cam.aspect = fw / fh; cam.setViewOffset(fw, fh, -l, -t, size.width, size.height); }
+    else { cam.clearViewOffset(); cam.aspect = size.width / Math.max(1, size.height); }
+    cam.updateProjectionMatrix();
     invalidate();
-  }, [camera, size.width, size.height, x, z, span, invalidate]);
+  }, [camera, size.width, size.height, l, r, t, b, invalidate]);
+  // Camera position: restore this space's saved view, or frame the room once. Save the view when leaving.
+  const framed = useRef<string | null>(null);
+  useEffect(() => {
+    if (size.width < 10 || size.height < 10 || !controls) return;
+    const key = viewKey ?? `${x},${z}`;
+    if (framed.current === key) return;
+    framed.current = key;
+    const saved = viewKey ? savedViews.get(viewKey) : undefined;
+    if (saved) { camera.position.copy(saved.pos); controls.target.copy(saved.target); }
+    else {
+      const aspect = (size.width - l - r) / Math.max(1, size.height - t - b);
+      const framing = Math.max(1, 1.1 / Math.max(0.1, aspect));
+      camera.position.set(x + span * .15 * framing, span * .85 * framing, z + span * .8 * framing);
+      controls.target.set(x, 0, z);
+    }
+    controls.update();
+    invalidate();
+  }, [viewKey, x, z, span, size.width, size.height, controls, camera, invalidate]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    if (viewKey && controls) savedViews.set(viewKey, { pos: camera.position.clone(), target: controls.target.clone() });
+  }, [viewKey, controls, camera]);
   return null;
 }
 
-export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight }: ViewerProps) {
+export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight, viewInset, model, viewKey, photo }: ViewerProps) {
   const c = centroid(annotation.floor);
   const bb = bbox(annotation.floor);
   const span = Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ);
@@ -154,10 +225,17 @@ export default function PlanningView({ annotation, overlay, artworkHeightM, atte
           {overlay.green.map((p, i) => <FlatPoly key={"g" + i} poly={p} color="#6bdcc5" y={0.006} opacity={0.35} />)}
           {overlay.red.map((p, i) => <FlatPoly key={"r" + i} poly={p} color="#d93025" y={0.008} opacity={0.6} />)}
           <Outline poly={overlay.buffer} color={overlay.red.length ? "#d93025" : "#2e7d4f"} dashed y={0.015} />
-          <Extruded poly={overlay.artwork} height={artworkHeightM} y={baseElevationM}
+          {model ? (
+            <>
+              <ModelArtwork corners={overlay.artwork} heightM={artworkHeightM} y={baseElevationM} model={model} conflict={attempt || conflict} />
+              {/* the outer box on the floor: what the placement check uses */}
+              {baseElevationM === 0 && <Outline poly={overlay.artwork} color="#111111" dashed y={0.02} width={1} />}
+            </>
+          ) : <Extruded poly={overlay.artwork} height={artworkHeightM} y={baseElevationM}
             color={finish ? finish.hex : attempt ? "#d93025" : "#171717"} opacity={attempt || conflict ? 0.6 : 0.95}
             roughness={finish?.material === "gloss" ? 0.15 : finish?.material === "satin" ? 0.5 : 1}
-            edges={attempt || conflict ? "#d93025" : luminance(finish?.hex ?? "#171717") > 0.5 ? "#111111" : "#9aa09a"} />
+            edges={attempt || conflict ? "#d93025" : luminance(finish?.hex ?? "#171717") > 0.5 ? "#111111" : "#9aa09a"} />}
+          {!model && photo && !(attempt || conflict) && <PhotoFace corners={overlay.artwork} heightM={artworkHeightM} y={baseElevationM} photo={photo} />}
           {baseElevationM > 0 && (
             <>
               {/* floor projection of the lifted artwork + guides; the plan check uses this projection */}
@@ -177,8 +255,8 @@ export default function PlanningView({ annotation, overlay, artworkHeightM, atte
         </>
       )}
       <ContactShadows position={[c.x, 0.001, c.z]} scale={span * 1.4} opacity={0.35} blur={2} far={4} />
-      <OrbitControls target={[c.x, 0, c.z]} maxPolarAngle={Math.PI / 2.05} makeDefault />
-      <ResponsiveCamera x={c.x} z={c.z} span={span} />
+      <OrbitControls maxPolarAngle={Math.PI / 2.05} makeDefault />
+      <ResponsiveCamera x={c.x} z={c.z} span={span} inset={viewInset} viewKey={viewKey} />
       <ViewDirectionReporter onViewRight={onViewRight} />
     </Canvas>
   );

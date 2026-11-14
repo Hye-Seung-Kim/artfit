@@ -1,27 +1,35 @@
-// Workspace edit surface: Claude command bar (under the viewer) + manual controls (left column).
+// Workspace edit surface: AI edit dock (Claude behind the server API) (under the viewer) + manual controls (left column).
 // Both go through the same applyOps() and history, so they always edit the same artwork state.
-import { useState } from "react";
-import { FINISH_COLORS, type ApplyContext, type ArtworkEditState, type EditOp, type FinishColor, type FinishMaterial } from "@artfit/geometry";
+import { useEffect, useRef, useState } from "react";
+import { FINISH_COLORS, type ApplyContext, type EditOp, type FinishColor, type FinishMaterial } from "@artfit/geometry";
 import type { EditorApi } from "./useArtworkEditor";
 
-const EXAMPLES = ["Move left 30 cm", "Turn right 15°", "Make the width 10% smaller", "Lift it 1 m off the floor", "Matte white", "Undo that"];
-
-const FIELDS: { key: keyof ArtworkEditState | "position" | "rotation" | "finish"; label: string; get: (s: ArtworkEditState) => string }[] = [
-  { key: "position", label: "Position (x, z)", get: (s) => (s.mode === "user_pose" && s.pose ? `${s.pose.x.toFixed(2)}, ${s.pose.z.toFixed(2)} m` : "best sampled") },
-  { key: "rotation", label: "Rotation", get: (s) => (s.mode === "user_pose" && s.pose ? `${s.pose.rotDeg.toFixed(0)}°` : "best sampled") },
-  { key: "widthM", label: "Width", get: (s) => `${s.widthM} m` },
-  { key: "depthM", label: "Depth", get: (s) => `${s.depthM} m` },
-  { key: "heightM", label: "Height", get: (s) => `${s.heightM} m` },
-  { key: "baseElevationM", label: "Bottom above floor", get: (s) => `${s.baseElevationM} m` },
-  { key: "finish", label: "Finish", get: (s) => `${FINISH_COLORS[s.color].label}, ${s.material}` },
-];
+const EXAMPLES = ["Width −10%", "1 m off floor", "Matte white"];
 
 export interface RendererState { plan: string; scan: string }
 
-export function ClaudeEditBar({ editor, claudeReady, spaceName, ctxFor, viewLabel, renderers }: {
-  editor: EditorApi; claudeReady: boolean | null; spaceName: string; ctxFor: () => ApplyContext; viewLabel: string; renderers: RendererState;
+/** Short display form of an applied change, e.g. "Moved left 30 cm." The full text stays in the history label. */
+function shortChange(t: string): string {
+  const out = t.split(/;\s*|\s·\s/).map((part) => {
+    const mv = part.match(/^Moved ([\d.]+) m to the (\w+)/);
+    if (mv) { const cm = Math.round(Number(mv[1]) * 100); return `Moved ${mv[2]} ${cm >= 100 ? `${(cm / 100).toFixed(2).replace(/\.?0+$/, "")} m` : `${cm} cm`}`; }
+    const el = part.match(/^Bottom above floor [\d.]+ m → ([\d.]+) m/);
+    if (el) return Number(el[1]) === 0 ? "Back on the floor" : `Raised ${el[1]} m off the floor`;
+    return part.replace(/\s*\((?:seen from above|as seen[^)]*)\)/g, "").replace(/\s+as seen in the [\w\s]+view/g, "");
+  });
+  return out.join(" · ").replace(/\.?$/, ".");
+}
+
+const isFailure = (r: string) => /unavailable|no artwork pose|error|failed/i.test(r);
+
+export function AiEditBar({ editor, aiReady, ctxFor, viewLabel, renderers, alerts }: {
+  editor: EditorApi; aiReady: boolean | null; ctxFor: () => ApplyContext; viewLabel: string; renderers: RendererState;
+  /** Result facts that must not be hidden after a related edit (conflict, unverified ceiling, …). */
+  alerts: { text: string; tone: "conflict" | "unknown" }[];
 }) {
   const [text, setText] = useState("");
+  const [help, setHelp] = useState(false);
+  const logRef = useRef<HTMLOListElement>(null);
   const busy = editor.ai.kind === "interpreting";
   const send = (msg: string) => {
     const m = msg.trim();
@@ -29,53 +37,60 @@ export function ClaudeEditBar({ editor, claudeReady, spaceName, ctxFor, viewLabe
     void editor.askClaude(m, ctxFor, viewLabel);
     setText("");
   };
-  const s = editor.state, prev = editor.previous;
-  const changed = prev ? FIELDS.filter((f) => f.get(prev) !== f.get(s)) : [];
   const ai = editor.ai;
+  const log = editor.exchanges;
+  const renderIssues = [
+    isFailure(renderers.plan) ? `3D planning view: ${renderers.plan}` : null,
+    isFailure(renderers.scan) ? `Matterport scan: ${renderers.scan}` : null,
+  ].filter(Boolean) as string[];
+  useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [log.length, busy]);
   return (
-    <div className="edit-bar" aria-label="Edit the artwork">
-      <div className="edit-bar-head">
-        <div>
-          <strong>Edit the artwork</strong>
-          <span className="faint"> · {spaceName} · {s.artworkId} · edit v{s.version}</span>
-        </div>
-        <span className="faint">{claudeReady === null ? "Checking Claude…" : claudeReady ? "Claude interprets; ArtFit applies and checks" : "Claude not connected — manual controls still work"}</span>
-      </div>
-      <form className="edit-bar-input" onSubmit={(e) => { e.preventDefault(); send(text); }}>
-        <label htmlFor="edit-request" className="sr-only">Describe the change</label>
-        <input id="edit-request" value={text} onChange={(e) => setText(e.target.value)} disabled={!claudeReady}
-          placeholder={claudeReady ? "e.g. move it left 30 cm and turn it right 15°" : "Claude is not configured on the server"} autoComplete="off" />
-        {busy
-          ? <button type="button" onClick={editor.cancelClaude}>Cancel</button>
-          : <button type="submit" className="primary" disabled={!claudeReady || !text.trim()}>Apply</button>}
-      </form>
-      <div className="edit-examples">
-        {EXAMPLES.map((ex) => <button key={ex} type="button" className="text-button" disabled={!claudeReady || busy} onClick={() => send(ex)}>{ex}</button>)}
-      </div>
-      <div className="edit-status" role="status" aria-live="polite">
-        {ai.kind === "interpreting" && <><span className="spinner" /> Interpreting “{ai.message}”…</>}
-        {ai.kind === "applied" && <><strong>Applied</strong> “{ai.message}”: {ai.summary.join("; ")}{ai.ms ? <span className="faint"> · Claude {Math.round(ai.ms / 100) / 10}s</span> : null}</>}
-        {ai.kind === "clarify" && <><strong>{ai.needsInfo ? "Needs your input" : "Not supported"}</strong> — {ai.question}</>}
-        {ai.kind === "failed" && <><strong>Not applied</strong> “{ai.message}”: {ai.reason}</>}
-        {ai.kind === "discarded" && <><strong>Discarded</strong> “{ai.message}”: {ai.reason}</>}
-        {ai.kind === "local" && <><strong>Done</strong> — {ai.summary}</>}
-        {ai.kind === "idle" && <span className="faint">Directions are relative to the {viewLabel}. Turning right = clockwise seen from above.</span>}
-      </div>
-      <div className="edit-compare">
+    <section className="dock" aria-label="Edit artwork with AI">
+      <div className="dock-head">
+        <strong>Edit artwork</strong>
+        {aiReady === false
+          ? <span className="dock-conn off">AI not connected — manual controls still work</span>
+          : <span className={"dock-dot" + (aiReady ? " on" : "")} role="img" aria-label={aiReady ? "AI connected" : "Checking AI connection"} title={aiReady ? "AI connected. The AI reads your request; ArtFit applies and checks it." : "Checking AI connection…"} />}
+        <button type="button" className="dock-help" aria-expanded={help} aria-controls="dock-help-text" aria-label="How directions work" onClick={() => setHelp((h) => !h)}>i</button>
         <div className="edit-history-buttons">
           <button type="button" onClick={editor.undo} disabled={!editor.history.past.length || busy}>Undo</button>
           <button type="button" onClick={editor.redo} disabled={!editor.history.future.length || busy}>Redo</button>
-          <button type="button" onClick={editor.reset} disabled={busy}>Reset to session start</button>
+          <button type="button" onClick={editor.reset} disabled={busy}>Reset</button>
         </div>
-        <div className="faint">Current state from: {editor.history.present.label} {editor.history.present.source === "claude" ? "(Claude request)" : editor.history.present.source === "manual" ? "(manual)" : ""}</div>
-        {changed.length > 0 && (
-          <table className="kv edit-diff"><tbody>
-            {changed.map((f) => <tr key={f.key}><td>{f.label}</td><td>{f.get(prev!)} → <strong>{f.get(s)}</strong></td></tr>)}
-          </tbody></table>
-        )}
-        <div className="faint">Shown in: 3D planning view — {renderers.plan}; Matterport scan — {renderers.scan}.</div>
       </div>
-    </div>
+      {help && <p id="dock-help-text" className="dock-helptext">Left and right follow the {viewLabel}. Turning right is clockwise, seen from above. Units: cm, m or ft.</p>}
+      {(log.length > 0 || busy) && (
+        <ol className="dock-log" ref={logRef} aria-live="polite">
+          {log.map((x, i) => <li key={i}><span className="req">{x.request}</span><span className="res">{/^not applied/i.test(x.result) ? "Not applied." : shortChange(x.result)}</span></li>)}
+          {busy && ai.kind === "interpreting" && <li><span className="req">{ai.message}</span><span className="res"><span className="spinner" /> Working…</span></li>}
+        </ol>
+      )}
+      {(ai.kind === "clarify" || ai.kind === "failed" || ai.kind === "discarded" || ai.kind === "local") && (
+        <div className={"dock-status" + (ai.kind === "local" ? "" : ai.kind === "clarify" ? " ask" : " bad")} role="status">
+          {ai.kind === "clarify" && <><strong>{ai.needsInfo ? "Needs your input" : "Not supported"}</strong> — {ai.question}</>}
+          {ai.kind === "failed" && <><strong>Not applied</strong> — {ai.reason}</>}
+          {ai.kind === "discarded" && <><strong>Not applied</strong> — {ai.reason}</>}
+          {ai.kind === "local" && shortChange(ai.summary.replace(/^Manual change:\s*/, ""))}
+        </div>
+      )}
+      {(alerts.length > 0 || renderIssues.length > 0) && (
+        <ul className="dock-alerts" role="status">
+          {alerts.map((a) => <li key={a.text} className={a.tone}>{a.text}</li>)}
+          {renderIssues.map((a) => <li key={a} className="conflict">Not shown in {a}</li>)}
+        </ul>
+      )}
+      <form className="edit-bar-input" onSubmit={(e) => { e.preventDefault(); send(text); }}>
+        <label htmlFor="edit-request" className="sr-only">Describe the change</label>
+        <input id="edit-request" value={text} onChange={(e) => setText(e.target.value)} disabled={!aiReady}
+          placeholder={aiReady === false ? "AI is not available — use the controls on the left" : "Move left 30 cm"} autoComplete="off" />
+        {busy
+          ? <button type="button" onClick={editor.cancelClaude}>Cancel</button>
+          : <button type="submit" className="primary" disabled={!aiReady || !text.trim()}>Apply<span aria-hidden="true">↵</span></button>}
+      </form>
+      <div className="edit-examples">
+        {EXAMPLES.map((ex) => <button key={ex} type="button" className="text-button" disabled={!aiReady || busy} onClick={() => send(ex)}>{ex}</button>)}
+      </div>
+    </section>
   );
 }
 
