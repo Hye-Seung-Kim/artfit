@@ -11,6 +11,8 @@ import { useWorkerScan } from "../workspace/useScan";
 import { buildChecklist } from "../workspace/checklist";
 import { useArtworkEditor } from "../workspace/useArtworkEditor";
 import { AiEditBar, ManualPlacementControls } from "../workspace/ArtworkEditBar";
+import { GroupAiBar, GroupReviewPanel, GroupWorksPanel, groupScene, useGroupEvaluation, useGroupPlanner, worksFor } from "../workspace/GroupStudio";
+import { workBody } from "@artfit/geometry";
 import { importDimensions, isStretched, loadArtworkModel, loadArtworkPhoto, proportionalDims, type ArtworkModel, type ArtworkPhoto } from "../viewer/artworkModel";
 
 type SpaceData = { annotation: SpatialAnnotation | null; inspect: any; error?: string };
@@ -76,6 +78,8 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
   const [showEvidence, setShowEvidence] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [mode, setMode] = useState<"single" | "group">("single");
+  const isGroup = mode === "group";
   // User-supplied 3D model of the artwork (display only; checks keep using its outer box).
   const [model, setModel] = useState<ArtworkModel | null>(null);
   const [modelMsg, setModelMsg] = useState<{ kind: "busy" | "error" | "info"; text: string } | null>(null);
@@ -95,7 +99,7 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
     const ro = dock ? new ResizeObserver(() => setDockH(dock.offsetHeight)) : null;
     if (dock && ro) ro.observe(dock);
     return () => { mq.removeEventListener("change", on); ro?.disconnect(); };
-  }, []);
+  }, [mode]);
   const latestEval = useRef("");
 
   useEffect(() => {
@@ -110,6 +114,11 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
 
   const sd = data[active];
   const ann = sd?.annotation ?? null;
+  // Group show mode: several artists' works in this space (separate document with its own undo/redo).
+  const [groupSel, setGroupSel] = useState<string | null>(null);
+  const group = useGroupPlanner({ spaceIds, active, seed: { widthM: brief.artwork.widthM, depthM: brief.artwork.depthM, heightM: brief.artwork.heightM, clearanceM: brief.preferredClearanceM }, budget: brief.budget, currency: brief.budgetCurrency ?? "USD" });
+  const gev = useGroupEvaluation(isGroup ? ann : null, group);
+  const gscene = groupScene(group, gev, groupSel);
   // ArtFit internal edit state (not a CoStar/Matterport field). Sliders, manual controls and Claude all edit it.
   const editor = useArtworkEditor(active, { widthM: brief.artwork.widthM, depthM: brief.artwork.depthM, heightM: brief.artwork.heightM, baseElevationM: 0, color: "default", material: "matte" });
   const es = editor.state;
@@ -294,6 +303,27 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
     scanRight.current = scanRightBy.current[active] ?? null;
     setScanRender(scanRenderBy.current[active] ?? (scanOpened ? "loading" : "not opened"));
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Group show in the scan: every placed work in that space (route only for the active space, where it is computed).
+  const groupScanOverlay = (id: string): ScanOverlay | null => {
+    const a = data[id]?.annotation;
+    if (!a) return null;
+    const ws = worksFor(group.doc, id).filter((w) => w.pose);
+    if (!ws.length) return null;
+    const target = ws.find((w) => w.id === groupSel) ?? ws[0];
+    const corners = workBody(target, target.pose!);
+    const issues = id === active ? new Set(gscene.works.filter((w) => w.issue).map((w) => w.id)) : new Set<string>();
+    return {
+      artwork: corners, heightM: target.heightM, floorY: a.floorElevationY ?? 0, buffer: corners, red: [], green: [], conflict: false, limiter: null, showFigure: false,
+      floor: a.floor, center: { x: target.pose!.x, z: target.pose!.z }, label: `Group show · ${ws.length} works`,
+      group: {
+        works: ws.map((w) => {
+          const sc = id === active ? gscene.works.find((x) => x.id === w.id) : undefined;
+          return { corners: workBody(w, w.pose!), heightM: w.heightM, colorHex: sc?.color ?? "#171717", issue: issues.has(w.id), label: sc?.label ?? w.title, viewPoint: sc?.viewPoint ?? null, selected: w.id === groupSel };
+        }),
+        route: id === active ? gscene.route : [], entrance: id === active ? gscene.entrance : null,
+      },
+    };
+  };
   const [planRendered, setPlanRendered] = useState("not shown");
   useEffect(() => { setPlanRendered(view === "scan" ? "hidden in this tab (not rendered)" : ann && overlay ? `applied edit v${es.version}` : "no artwork pose to show"); }, [view, es.version, !!overlay, !!ann]);
 
@@ -313,6 +343,10 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
             </button>;
           })}
         </div>}
+        <div className="studio-mode" role="group" aria-label="Planning mode">
+          <button type="button" aria-pressed={!isGroup} onClick={() => setMode("single")}>Single work</button>
+          <button type="button" aria-pressed={isGroup} onClick={() => setMode("group")}>Group show</button>
+        </div>
         <div className="tabs" role="group" aria-label="View">
           {(["plan", "split", "scan"] as const).map((k) => <button key={k} className={view === k ? "on" : ""} aria-pressed={view === k} onClick={() => setView(k)}>{k === "plan" ? "3D planning view" : k === "scan" ? "Original Matterport scan" : "Side by side"}</button>)}
           <span className="status-line">{(local.busy || server.busy) && <><span className="spinner" /> Calculating</>}</span>
@@ -324,9 +358,10 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
         <div className="stage-views">
             {view !== "scan" && (
               <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
-                {ann ? <PlanningView annotation={ann} overlay={overlay} artworkHeightM={art.heightM} attempt={userPose ? false : !shown?.selectedPose} conflict={!posePasses} limiter={limiter} wallHeightM={Math.min(cand?.ceilingHeightM ?? 3, 4)}
+                {ann ? <PlanningView annotation={ann} overlay={isGroup ? null : overlay} artworkHeightM={art.heightM} attempt={userPose ? false : !shown?.selectedPose} conflict={!posePasses} limiter={isGroup ? null : limiter} wallHeightM={Math.min(cand?.ceilingHeightM ?? 3, 4)}
                     baseElevationM={es.baseElevationM} finish={finish} onViewRight={(r) => { planRight.current = r; }}
-                    model={modelView} viewKey={active} photo={photo}
+                    model={isGroup ? null : modelView} viewKey={active} photo={isGroup ? null : photo}
+                    group={isGroup ? { ...gscene, onSelect: setGroupSel } : null}
                     viewInset={wide ? { l: leftOpen ? 312 : 0, r: rightOpen && view === "plan" ? 352 : 0, t: 44, b: dockH ? dockH + 12 : 0 } : undefined} />
                   : <div className="page muted">{sd?.error ?? (sd ? "No traced geometry for this space — spatial result unknown." : "Loading…")}</div>}
               </div>
@@ -340,13 +375,14 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
                 <MatterportEmbed modelId={mid} editVersion={isActive ? es.version : undefined}
                   onViewRight={(r) => { scanRightBy.current[id] = r; if (id === activeRef.current) scanRight.current = r; }}
                   onRenderState={(st) => { scanRenderBy.current[id] = st; if (id === activeRef.current) setScanRender(st); }}
-                  overlay={isActive ? scanOverlayNow ?? lastScanOverlay.current[id] ?? null : lastScanOverlay.current[id] ?? null} />
+                  overlay={isGroup ? groupScanOverlay(id) : isActive ? scanOverlayNow ?? lastScanOverlay.current[id] ?? null : lastScanOverlay.current[id] ?? null} />
               </div>;
             })}
             {view !== "plan" && !scanModelOf(active) && <div className="page muted">No Matterport model associated with this space.</div>}
         </div>
         <div className="overlay-badges">
-          {model && <span className="badge">3D model: {model.title}</span>}
+          {isGroup && <span className="badge info">Group show · {gscene.works.length}/{group.works.length} works placed</span>}
+          {!isGroup && model && <span className="badge">3D model: {model.title}</span>}
           {photo && !model && <span className="badge">Front photo: {photo.fileName}</span>}
                   <span className="badge info">Scenario: as scanned</span>
                   <span className="badge">3D planning view reconstructed from traced geometry</span>
@@ -357,10 +393,11 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
 
         <aside className={"panel panel-left" + (leftOpen ? "" : " closed")} aria-label="Your work" aria-hidden={!leftOpen}>
           <div className="panel-head">
-            <div><div className="eyebrow">Your work</div><h2>Artwork &amp; space</h2></div>
+            <div><div className="eyebrow">{isGroup ? "Your show" : "Your work"}</div><h2>{isGroup ? "Works & artists" : <>Artwork &amp; space</>}</h2></div>
             <button type="button" className="panel-hide" aria-label="Hide your work panel" onClick={() => setLeftOpen(false)}>←</button>
           </div>
           <div className="panel-body">
+            {isGroup ? <GroupWorksPanel g={group} selected={groupSel} onSelect={setGroupSel} viewLabel={viewLabel} viewRight={() => (view === "scan" ? scanRight.current : planRight.current ?? defaultPlanViewRight())} /> : <>
             <div className="card">
           <SliderNum label="Width (m)" value={art.widthM} min={0.5} max={12} step={0.1} onChange={(x) => editor.setDims({ widthM: x }, "slider:width")} />
           <SliderNum label="Depth (m)" value={art.depthM} min={0.5} max={10} step={0.1} onChange={(x) => editor.setDims({ depthM: x }, "slider:depth")} />
@@ -403,10 +440,12 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
               <span className="badge info">As scanned — all traced contents included</span>
               <p className="faint">Hypothetical furniture removal is not enabled in this MVP. Occupancy and furniture evidence never change with the layout.</p>
             </div>
+          </>}
           </div>
         </aside>
 
         <aside className={"panel panel-right" + (rightOpen ? "" : " closed")} aria-label="Placement result" aria-hidden={!rightOpen}>
+          {isGroup ? <GroupReviewPanel g={group} ev={gev} ann={ann} onSelect={setGroupSel} onHide={() => setRightOpen(false)} otherSpaces={spaceIds.filter((x) => x !== active).map((x) => ({ id: x, name: data[x]?.inspect?.candidate.displayName ?? x, ann: data[x]?.annotation ?? null }))} /> : <>
           <div className="panel-head">
             <div>
               <div className={`verdict ${headline.cls}`}><span aria-hidden>{headline.icon}</span>{headline.text}</div>
@@ -514,13 +553,16 @@ Browser/server check: ${fingerprintsAgree ? "same scan fingerprint" : server.bus
               <p className="faint">Listings come from a November 2026 snapshot. Boundaries and obstacles were traced in advance; placement search runs live on these inputs. A scan does not confirm today's vacancy.</p>
             </div>
           </div>
+          </>}
         </aside>
 
         {!leftOpen && <button type="button" className="panel-tab panel-tab-left" onClick={() => setLeftOpen(true)}>Your work →</button>}
         {!rightOpen && <button type="button" className="panel-tab panel-tab-right" onClick={() => setRightOpen(true)}>← <span className={`tab-verdict ${headline.cls}`}>{headline.icon}</span> Result</button>}
 
-        <AiEditBar editor={editor} aiReady={claudeReady} ctxFor={ctxFor} viewLabel={viewLabel} alerts={editAlerts}
-          renderers={{ plan: planRendered, scan: scanOpened ? scanRender : "not opened" }} />
+        {isGroup
+          ? <GroupAiBar g={group} spaceId={active} ann={ann} aiReady={claudeReady} onSelect={setGroupSel} viewRight={() => (view === "scan" ? scanRight.current : planRight.current ?? defaultPlanViewRight())} />
+          : <AiEditBar editor={editor} aiReady={claudeReady} ctxFor={ctxFor} viewLabel={viewLabel} alerts={editAlerts}
+          renderers={{ plan: planRendered, scan: scanOpened ? scanRender : "not opened" }} />}
       </div>
     </main>
   );

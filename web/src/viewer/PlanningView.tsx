@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Html, Line, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
-import { bbox, centroid, pointInPolygon, type Obstacle, type Polygon, type SpatialAnnotation, type Vec2 } from "@artfit/geometry";
+import { bbox, centroid, pointInPolygon, roundedRect, type Obstacle, type Polygon, type SpatialAnnotation, type Vec2 } from "@artfit/geometry";
 import type { Overlay } from "../workspace/overlay";
 import { buildHumanFigure, figurePlacement } from "./humanFigure";
 import { boxPose, buildModelGroup, disposeGroup, makeStudioEnvironment, photoTexture, type ArtworkPhoto, type ModelPart } from "./artworkModel";
@@ -122,8 +122,40 @@ export interface ViewerProps {
   model?: { id: string; parts: ModelPart[]; override: { hex: string; roughness: number } | null } | null;
   /** Front photo applied to the box's front face (ignored when a 3D model is shown). */
   photo?: ArtworkPhoto | null;
+  /** Group show: several works, the viewing route and standing spots (replaces the single-artwork overlay). */
+  group?: {
+    works: { id: string; corners: Vec2[]; heightM: number; color: string; selected: boolean; issue: boolean; locked: boolean; label: string; clearanceM: number; viewPoint: Vec2 | null; pose: { x: number; z: number; rotDeg: number }; widthM: number; depthM: number }[];
+    route: Vec2[]; entrance: Vec2 | null; onSelect?: (id: string) => void;
+  } | null;
   /** Identifies the space; its camera view is saved and restored when switching spaces. */
   viewKey?: string;
+}
+
+/** Group show layer: every work (colour = artist), the selected work's viewing room, standing spots and the route. */
+function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
+  const sel = group.works.find((w) => w.selected) ?? null;
+  const fig = sel?.viewPoint ?? group.works.find((w) => w.viewPoint)?.viewPoint ?? null;
+  const figWork = sel ?? group.works.find((w) => w.viewPoint) ?? null;
+  return (
+    <>
+      {group.route.length > 1 && <Line points={group.route.map((p) => [p.x, 0.03, p.z] as [number, number, number])} color="#1f7a68" lineWidth={3} />}
+      {group.entrance && (
+        <Html position={[group.entrance.x, 0.2, group.entrance.z]} center><span className="scene-tag">Entrance</span></Html>
+      )}
+      {group.works.map((w) => (
+        <group key={w.id} onClick={(e) => { e.stopPropagation(); group.onSelect?.(w.id); }}>
+          {w.selected && <Outline poly={roundedRect(w.pose.x, w.pose.z, w.widthM, w.depthM, w.pose.rotDeg, w.clearanceM)} color={w.issue ? "#d93025" : "#2e7d4f"} dashed y={0.015} />}
+          <Extruded poly={w.corners} height={w.heightM} color={w.issue ? "#d93025" : w.color} opacity={w.issue ? 0.65 : w.selected ? 1 : 0.9}
+            edges={w.selected ? "#6bdcc5" : w.issue ? "#d93025" : "#9aa09a"} />
+          {w.viewPoint && <mesh position={[w.viewPoint.x, 0.02, w.viewPoint.z]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[0.12, 24]} /><meshBasicMaterial color="#1f7a68" /></mesh>}
+          <Html position={[w.pose.x, w.heightM + 0.35, w.pose.z]} center>
+            <span className={"scene-tag" + (w.selected ? " on" : "") + (w.issue ? " bad" : "")}>{w.label}{w.locked ? " · locked" : ""}</span>
+          </Html>
+        </group>
+      ))}
+      {fig && figWork && <Human at={fig} yaw={Math.atan2(figWork.pose.x - fig.x, figWork.pose.z - fig.z)} />}
+    </>
+  );
 }
 
 /** The artwork's front photo on the box's front face (local +z side, W × H), centre-cropped to the face. */
@@ -200,7 +232,7 @@ function ResponsiveCamera({ x, z, span, inset, viewKey }: { x: number; z: number
   return null;
 }
 
-export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight, viewInset, model, viewKey, photo }: ViewerProps) {
+export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight, viewInset, model, viewKey, photo, group }: ViewerProps) {
   const c = centroid(annotation.floor);
   const bb = bbox(annotation.floor);
   const span = Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ);
@@ -246,6 +278,7 @@ export default function PlanningView({ annotation, overlay, artworkHeightM, atte
           {human && <Human at={{ x: human.x, z: human.z }} yaw={human.yaw} />}
         </>
       )}
+      {group && <GroupLayer group={group} />}
       {limiter && (
         <>
           <Line points={[[limiter.artworkPoint.x, 0.05, limiter.artworkPoint.z], [limiter.limiterPoint.x, 0.05, limiter.limiterPoint.z]]} color="#111" lineWidth={2} />

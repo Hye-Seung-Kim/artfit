@@ -23,6 +23,11 @@ export interface ArtworkSceneSpec {
   material?: "matte" | "satin" | "gloss";
   /** User-supplied model as unit-sized raw geometry; drawn instead of the box, stretched to the box. */
   model?: { id: string; parts: ModelPart[]; override: { hex: string; roughness: number } | null } | null;
+  /** Group show: all works (colour = artist) and the walkable route; replaces the single-artwork drawing. */
+  group?: {
+    works: { corners: Vec2[]; heightM: number; colorHex: string; issue: boolean; label: string; viewPoint: Vec2 | null; selected: boolean }[];
+    route: Vec2[]; entrance: Vec2 | null;
+  } | null;
   /** Front photo for the box's front face (local +z, W × H). */
   photo?: { id: string; canvas: HTMLCanvasElement; aspect: number } | null;
 }
@@ -76,6 +81,68 @@ export function artworkComponentFactory() {
         l.renderOrder = 3;
         return l;
       };
+      if (spec.group) {
+        // Text tag that always faces the camera and stays readable over the scan.
+        const tag = (text: string, at: Vec2, y: number, opts: { dark?: boolean; bad?: boolean } = {}) => {
+          const c = document.createElement("canvas");
+          const ctx = c.getContext("2d")!;
+          ctx.font = "600 36px Helvetica Neue, Helvetica, Arial, sans-serif";
+          const w = Math.ceil(ctx.measureText(text).width) + 36;
+          c.width = w; c.height = 60;
+          ctx.font = "600 36px Helvetica Neue, Helvetica, Arial, sans-serif";
+          ctx.fillStyle = opts.dark ? "#090a09" : "rgba(255,255,255,0.94)"; ctx.fillRect(0, 0, w, 60);
+          ctx.strokeStyle = opts.bad ? "#d93025" : "#090a09"; ctx.lineWidth = 4; ctx.strokeRect(2, 2, w - 4, 56);
+          ctx.fillStyle = opts.dark ? "#6bdcc5" : opts.bad ? "#d93025" : "#090a09"; ctx.textBaseline = "middle"; ctx.fillText(text, 18, 32);
+          const tex = new THREE.CanvasTexture(c);
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+          sp.scale.set((w / 60) * 0.32, 0.32, 1);
+          sp.position.set(at.x, y, at.z);
+          sp.renderOrder = 10;
+          return sp;
+        };
+        for (const w of spec.group.works) {
+          const geo = new THREE.ExtrudeGeometry(shape(w.corners), { depth: w.heightM, bevelEnabled: false });
+          const body = new THREE.Mesh(geo, new THREE.MeshMatcapMaterial({ matcap: makeMatcap(THREE, "soft"), color: new THREE.Color(w.issue ? "#d93025" : w.colorHex), transparent: true, opacity: w.issue ? 0.6 : 0.9 }));
+          body.rotation.x = -Math.PI / 2; body.position.y = y0;
+          const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: w.selected ? 0x6bdcc5 : w.issue ? 0xd93025 : 0xffffff }));
+          edges.rotation.x = -Math.PI / 2; edges.position.y = y0;
+          this.group.add(body, edges);
+          const c = { x: w.corners.reduce((t, p) => t + p.x, 0) / w.corners.length, z: w.corners.reduce((t, p) => t + p.z, 0) / w.corners.length };
+          this.group.add(tag(w.label, c, y0 + w.heightM + 0.3, { dark: w.selected, bad: w.issue }));
+          if (w.viewPoint) {
+            // Standing spot: a ring on the floor.
+            const ring = new THREE.Mesh(new THREE.RingGeometry(0.14, 0.22, 32), new THREE.MeshBasicMaterial({ color: 0x1f7a68, side: THREE.DoubleSide, depthWrite: false, transparent: true, opacity: 0.95 }));
+            ring.rotation.x = -Math.PI / 2; ring.position.set(w.viewPoint.x, y0 + 0.03, w.viewPoint.z); ring.renderOrder = 4;
+            this.group.add(ring);
+          }
+        }
+        const route = spec.group.route;
+        if (route.length > 1) {
+          // Route as a flat 18 cm ribbon on the floor (GL lines are 1 px), with chevrons pointing the walking direction.
+          const pos: number[] = [];
+          const half = 0.09;
+          for (let k = 0; k < route.length - 1; k++) {
+            const a = route[k], b = route[k + 1];
+            const L = Math.hypot(b.x - a.x, b.z - a.z);
+            if (L < 1e-6) continue;
+            const nx = -(b.z - a.z) / L * half, nz = (b.x - a.x) / L * half;
+            const y = y0 + 0.035;
+            pos.push(a.x + nx, y, a.z + nz, a.x - nx, y, a.z - nz, b.x + nx, y, b.z + nz, b.x + nx, y, b.z + nz, a.x - nx, y, a.z - nz, b.x - nx, y, b.z - nz);
+            for (let s = 0.6; s < L - 0.2; s += 1.2) {
+              const ux = (b.x - a.x) / L, uz = (b.z - a.z) / L, px = a.x + ux * s, pz = a.z + uz * s;
+              const tip = { x: px + ux * 0.16, z: pz + uz * 0.16 }, l = { x: px - ux * 0.06 + nx * 1.6, z: pz - uz * 0.06 + nz * 1.6 }, r = { x: px - ux * 0.06 - nx * 1.6, z: pz - uz * 0.06 - nz * 1.6 };
+              pos.push(l.x, y + 0.002, l.z, tip.x, y + 0.002, tip.z, r.x, y + 0.002, r.z);
+            }
+          }
+          const g = new THREE.BufferGeometry();
+          g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+          const ribbon = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x1f7a68, side: THREE.DoubleSide, transparent: true, opacity: 0.9, depthWrite: false }));
+          ribbon.renderOrder = 5;
+          this.group.add(ribbon);
+        }
+        if (spec.group.entrance) this.group.add(tag("Entrance", spec.group.entrance, y0 + 0.5));
+        return;
+      }
       for (const g of spec.green) this.group.add(flat(g, 0x3fa66a, 0.35, 0.01));
       for (const r of spec.red) this.group.add(flat(r, 0xd93025, 0.6, 0.015));
       this.group.add(line(spec.buffer, spec.red.length ? 0xd93025 : 0x2e7d4f, 0.02));

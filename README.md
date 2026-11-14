@@ -66,6 +66,20 @@ ArtFit uses a November 2026 CoStar data-kit snapshot, not live inventory. A mark
 - **Height:** ceiling height was the interviewed artist's real failure point. The result panel shows a separate height check. Only a measured local ceiling can pass or fail it; the building's listed ceiling is drawn as context.
 - **Checklist:** the first line is the actual short-term quote. It also asks about fixing on walls, ceiling or roof, light color and daylight, floor material and color, and other works sharing the space.
 
+## Group show (planning several artists' works together)
+
+The Workspace has a **Single work | Group show** switch. Group show plans one space with several artists' floor-standing works. The first version is meant for 2–3 artists and 3–5 works.
+
+- **Works:** each has an artist, title, real size, viewing room, required/optional, and a lock that keeps its position in this space. Sizes are only changed by the user; planning and the AI never resize or drop a work.
+- **Checks** (`geometry/src/group.ts`):
+  - Bodies never overlap each other, the floor edge or blockers.
+  - Viewing space can be shared, but no work may sit inside another work's viewing room.
+  - Required works without a place are reported.
+- **Route:** a walkable path on a 0.2 m grid, from the traced entrance to a standing spot at each work in the viewing order and back. It is a connectivity preview, not a crowding or safety check. With no traced entrance, no route is drawn.
+- **Suggested layouts:** randomized greedy search per priority (most room, follows the viewing order, fewest changes). These are suggestions for the chosen conditions, not an optimum. Locked works stay put. "The same show elsewhere" checks the other candidate space.
+- **Budget:** costs are split into quoted, estimated and unknown. Unknown costs are never counted as zero, currencies are not mixed, and the listing's asking rent is never treated as a short-term price. Moving works does not change cost.
+- **AI** (`POST /api/workspace/group-edit`): allowlisted operations only (lock, unlock, set order, rearrange, move, rotate, set viewing room, select, undo, redo). There is no resize or remove operation. Each request is one undoable step.
+
 ## What's next
 
 1. Collect and show short-term pricing from owners for the exhibition dates.

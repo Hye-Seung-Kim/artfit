@@ -32,6 +32,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   const [sweeps, setSweeps] = useState<{ sid: string; position: { x: number; y: number; z: number } }[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const overlayRef = useRef(overlay);
+  const viewModeRef = useRef<string | null>(null); // current Showcase mode (inside / dollhouse / floorplan)
   overlayRef.current = overlay;
 
   // Mount <matterport-viewer>, wait for Playing, register the artwork component and create the scene object.
@@ -79,6 +80,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
         subs.push(mp.Sweep.data.subscribe({
           onCollectionUpdated(c: Record<string, any>) { if (!cancelled) setSweeps(Object.entries(c).map(([sid, s]) => ({ sid: s.sid ?? sid, position: s.position }))); },
         }));
+        subs.push(mp.Mode.current.subscribe((m: string) => { viewModeRef.current = m; }));
         // Camera yaw → viewer-right floor vector (three.js convention verified with Sweep.moveTo: forward = (−sin ψ, −cos ψ)).
         subs.push(mp.Camera.pose.subscribe((pose: any) => {
           if (cancelled || !pose?.rotation) return;
@@ -101,7 +103,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   }, [modelId, attempt]);
 
   // Push every new pose into the live scene component (no reload).
-  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material, overlay.model?.id ?? null, overlay.model?.override ?? null, overlay.photo?.id ?? null]) : "none";
+  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material, overlay.model?.id ?? null, overlay.model?.override ?? null, overlay.photo?.id ?? null, overlay.group ?? null]) : "none";
   useEffect(() => {
     if (status.kind !== "playing") { onRenderStateRef.current?.(status.kind === "loading" ? `loading (${status.step})` : `unavailable: ${status.reason}`); return; }
     if (!compRef.current) { onRenderStateRef.current?.("scene object not ready"); return; }
@@ -122,7 +124,14 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
     else if (m === "floorplan") mp.Mode.moveTo(mp.Mode.Mode.FLOORPLAN).catch((e: Error) => setNote(e.message));
     else {
       const o = overlayRef.current;
-      if (!o || !sweeps.length) return;
+      const INSIDE = mp.Mode.Mode.INSIDE;
+      const inside = () => viewModeRef.current === INSIDE || viewModeRef.current === "mode.inside";
+      if (!o || !sweeps.length) {
+        // Nothing placed yet: still bring the visitor back inside the scan (from dollhouse / floor plan).
+        if (!o) setNote("No artwork placed yet; showing the scan from inside.");
+        if (!inside()) mp.Mode.moveTo(INSIDE).catch((e: Error) => setNote("Move failed: " + e.message));
+        return;
+      }
       // Nearest viewpoint inside the matched floor region but OUTSIDE the clearance buffer, so the camera stands
       // in the same room looking at the artwork rather than inside it or behind a wall.
       const dist = (s: (typeof sweeps)[number]) => Math.hypot(s.position.x - o.center.x, s.position.z - o.center.z);
@@ -135,8 +144,19 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
       const dx = o.center.x - s.position.x, dz = o.center.z - s.position.z;
       const yaw = (Math.atan2(-dx, -dz) * 180) / Math.PI; // three.js camera looks down -Z
       const pitch = -(Math.atan2(s.position.y - o.floorY - o.heightM / 2, Math.hypot(dx, dz)) * 180) / Math.PI;
-      mp.Sweep.moveTo(s.sid, { rotation: { x: pitch, y: yaw }, transition: mp.Sweep.Transition.FLY, transitionTime: 1500 })
-        .catch((e: Error) => setNote("Move failed: " + e.message));
+      const rotation = { x: pitch, y: yaw };
+      (async () => {
+        try {
+          // From dollhouse / floor plan, switch back to inside AT the chosen viewpoint first; a plain sweep move
+          // is not reliable outside the inside mode.
+          if (!inside()) await mp.Mode.moveTo(INSIDE, { sweep: s.sid, rotation, transition: mp.Mode.TransitionType?.FLY });
+          await mp.Sweep.moveTo(s.sid, { rotation, transition: mp.Sweep.Transition.FLY, transitionTime: 1500 });
+        } catch (e) {
+          // Already standing at that viewpoint after the mode switch is fine; anything else is reported.
+          if (!inside()) setNote("Move failed: " + (e as Error).message);
+          else mp.Camera.setRotation?.(rotation, { speed: 2 }).catch?.(() => {});
+        }
+      })();
     }
   };
 
@@ -154,7 +174,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
         {status.kind === "playing" && <span className="badge fit">● Artwork placed in scan · {sweeps.length} viewpoints</span>}
         {status.kind === "loading" && <span className="badge info">Loading…</span>}
         {status.kind === "error" && <span className="badge conflict">{status.reason}</span>}
-        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing" || !overlay} onClick={() => mode("inside")}>View artwork from inside</button>
+        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("inside")}>{overlay ? "View artwork from inside" : "Back inside"}</button>
         <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("dollhouse")}>Dollhouse</button>
         <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("floorplan")}>Floor plan</button>
         {status.kind === "error" && <button className="ghost" style={{ padding: "2px 8px" }} onClick={() => setAttempt((a) => a + 1)}>Retry</button>}

@@ -15,7 +15,15 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
   const [health, setHealth] = useState<any>(null);
-  useEffect(() => { api.health().then(setHealth).catch(() => setHealth({ ok: false, kitError: "API server not reachable" })); }, []);
+  // Re-check every 3 s until the API answers, so a server restart doesn't leave a stale error on screen.
+  useEffect(() => {
+    let stop = false, t: ReturnType<typeof setTimeout> | undefined;
+    const check = () => api.health()
+      .then((h) => { if (stop) return; setHealth(h); if (!h.ok) t = setTimeout(check, 3000); })
+      .catch(() => { if (stop) return; setHealth({ ok: false, kitError: "API server not reachable" }); t = setTimeout(check, 3000); });
+    void check();
+    return () => { stop = true; clearTimeout(t); };
+  }, []);
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: "instant" }); }, [screen]);
 

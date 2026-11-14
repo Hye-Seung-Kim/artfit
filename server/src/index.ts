@@ -5,6 +5,7 @@ import { InputError, evaluate_placement, inspect_space, plan_alternatives, searc
 import { TOOL_NAMES, factsFromPlan, narrate } from "./agent/narration.js";
 import { AGENT_MODEL, llmConfigured, runAgent } from "./agent/loop.js";
 import { interpretEdit } from "./agent/workspaceEdit.js";
+import { interpretGroupEdit } from "./agent/groupEdit.js";
 import { loadLedger, saveLedger } from "./evidence/ledger.js";
 import { loadAnnotation, saveAnnotation } from "./scenarios/store.js";
 
@@ -81,6 +82,7 @@ app.post("/api/agent/run", async (req, res) => {
 });
 // Workspace artwork editing (separate from the four-tool search agent): Claude → allowlisted edit ops only.
 app.post("/api/workspace/edit", handle((req) => interpretEdit(needKit(), req.body)));
+app.post("/api/workspace/group-edit", handle((req) => interpretGroupEdit(needKit(), req.body)));
 app.get("/api/agent/status", (_req, res) => { res.json({ configured: llmConfigured(), model: AGENT_MODEL, tools: TOOL_NAMES }); });
 
 // Internal team-only annotation/review routes (not agent tools; spec §6, §8.1).
