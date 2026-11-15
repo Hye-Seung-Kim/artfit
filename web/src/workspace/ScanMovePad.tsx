@@ -13,7 +13,8 @@ export function ScanMovePad({ works, selected, onSelect, onMove, onRotate, onLoc
   canPlace?: boolean;
 }) {
   const [step, setStep] = useState(0.1);
-  const [open, setOpen] = useState(true);
+  // Phones start with the pad folded so it doesn't cover the plan; one tap opens it.
+  const [open, setOpen] = useState(() => !(typeof window !== "undefined" && window.matchMedia?.("(max-width: 760px)").matches));
   const i = Math.max(0, works.findIndex((w) => w.id === selected));
   const w = works[i];
   const cycle = (d: number) => works.length && onSelect(works[(i + d + works.length) % works.length].id);
