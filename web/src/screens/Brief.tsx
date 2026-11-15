@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { BriefWork, ExhibitionBrief } from "@artfit/geometry";
 import ArtworkStudy, { type StudyFocus } from "../components/ArtworkStudy";
 import { api } from "../api";
+const HeroSculpture = lazy(() => import("../components/HeroSculpture")); // three.js + model load after the copy
 
 export const USES = ["Retail", "Flex", "Industrial", "OfficeRetail", "Office", "OfficeMedical", "Medical"];
 const USE_LABELS: Record<string, string> = { OfficeRetail: "Office / retail", OfficeMedical: "Medical office" };
@@ -125,7 +126,7 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
             <button type="button" className="text-button" onClick={() => { setBrief(EXAMPLE_BRIEF); setReached(STEPS.length - 1); go(STEPS.length - 1); }}>Use example exhibition</button>
           </div>
         </div>
-        <HeroStudy />
+        <Suspense fallback={<figure className="hero-sculpture" />}><HeroSculpture /></Suspense>
       </div>
     </main>;
   }
@@ -292,9 +293,3 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
   </main>;
 }
 
-/** Landing figure the visitor can play with; a toy only, it doesn't change the brief. */
-function HeroStudy() {
-  const [h, setH] = useState(2.4);
-  const [c, setC] = useState(1.5);
-  return <ArtworkStudy width={4} depth={3} height={h} clearance={c} handles={{ onHeight: setH, onClearance: setC }} />;
-}

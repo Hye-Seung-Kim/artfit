@@ -1194,3 +1194,15 @@ button.name-link { padding: 0; min-height: 0; border: 0; background: transparent
   .study-pulse { animation: none; transform: scale(1.6); opacity: .35; }
   .study-knob { transition: none; }
 }
+
+/* Landing sculpture (replaces the drawn study on the introduction). */
+.hero-sculpture { position: relative; align-self: stretch; min-height: 460px; margin: 0; background: var(--surface-2); overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.hero-sculpture canvas { display: block; opacity: 0; transition: opacity 400ms var(--ease-out); touch-action: pan-y; cursor: grab; }
+.hero-sculpture canvas:active { cursor: grabbing; }
+.hero-sculpture.ready canvas { opacity: 1; }
+.hero-hint { position: absolute; left: 20px; top: 18px; font-size: 11px; color: var(--ink-2); white-space: nowrap; pointer-events: none; transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out); }
+.hero-hint.gone { opacity: 0; transform: translateY(-4px); }
+.hero-credit { position: absolute; right: 12px; bottom: 10px; font-size: 9px; color: var(--ink-3); }
+.hero-credit a { color: inherit; }
+@media (max-width: 760px) { .hero-sculpture { min-height: 380px; } .hero-hint { top: auto; bottom: 30px; left: 14px; } }
+@media (prefers-reduced-motion: reduce) { .hero-sculpture canvas, .hero-hint { transition: none; } }
