@@ -54,7 +54,7 @@ export default function App() {
       {screen === "brief" && <Brief brief={brief} setBrief={setBrief} onSearch={search} busy={busy} error={error} />}
       {screen === "discover" && result && <Discover result={result} brief={brief} briefChanged={searchedKey !== searchKey(brief)} onSearchAgain={search} searching={busy} onBack={() => setScreen("brief")} onOpen={(ids, layouts) => { setSpaceIds(ids); setAgentLayouts(layouts ?? null); setScreen("workspace"); }} />}
       {screen === "workspace" && spaceIds.length > 0 && <Workspace key={spaceIds.join("|") + (agentLayouts ? "|agent" : "")} spaceIds={spaceIds} initialLayouts={agentLayouts} brief={brief} setBrief={setBrief} onBack={() => setScreen("discover")} />}
-      {screen !== "workspace" && <footer className="site-footer"><span className="footer-mark"><img className="footer-symbol" src="/brand/artfit-symbol.svg" alt="" /><img className="footer-wordmark" src="/brand/artfit-wordmark-bold.svg" alt="ArtFit" /></span><div className="footer-copy"><span>Art, in the right place.</span><span>CoStar data kit · November 2026 snapshot</span><span>Preliminary spatial planning. Conditions need verification.</span></div></footer>}
+      {screen !== "workspace" && <footer className="site-footer"><span className="footer-mark">ARTFIT</span><div className="footer-copy"><span>Art, in the right place.</span><span>CoStar data kit · November 2026 snapshot</span><span>Preliminary spatial planning. Conditions need verification.</span></div></footer>}
     </div>
   );
 }

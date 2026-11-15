@@ -1,6 +1,6 @@
 // Move pad over the Matterport scan, where works can't be dragged: pick a work in the middle (‹ ›), move it with
 // the arrows around it (relative to the current scan view), turn it, lock it, or click the floor to place it.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface PadWork { id: string; title: string; locked: boolean; placed: boolean }
 
@@ -18,14 +18,34 @@ export function ScanMovePad({ works, selected, onSelect, onMove, onRotate, onLoc
   const w = works[i];
   const cycle = (d: number) => works.length && onSelect(works[(i + d + works.length) % works.length].id);
   const off = !w || !w.placed || w.locked;
-  // Keyboard: arrow keys move, [ ] turn, while focus is inside the pad.
+  // Keyboard inside the pad (focus on a pad button).
   const onKey = (e: React.KeyboardEvent) => {
     const k: Record<string, "forward" | "right" | "back" | "left"> = { ArrowUp: "forward", ArrowRight: "right", ArrowDown: "back", ArrowLeft: "left" };
-    if (k[e.key] && !off) { e.preventDefault(); onMove(k[e.key], step); }
+    if (k[e.key] && !off) { e.preventDefault(); onMove(k[e.key], e.shiftKey ? 0.5 : step); }
     else if (e.key === "[" && !off) onRotate(-15);
     else if (e.key === "]" && !off) onRotate(15);
   };
   useEffect(() => { if (off && placing) onPlacing(false); }, [off]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Arrow keys anywhere on the page move the selected work while the pad is open (Shift = 50 cm step, [ ] turn).
+  // Typing in a field, a modifier shortcut or an open dialog keeps the keys for themselves.
+  const latest = { off, step, onMove, onRotate };
+  const ref = useRef(latest); ref.current = latest;
+  useEffect(() => {
+    if (!open) return;
+    const onWinKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("input, textarea, select, [contenteditable=''], [contenteditable='true'], dialog[open], .movepad")) return;
+      if (document.querySelector("dialog[open]")) return;
+      const { off, step, onMove, onRotate } = ref.current;
+      const k: Record<string, "forward" | "right" | "back" | "left"> = { ArrowUp: "forward", ArrowRight: "right", ArrowDown: "back", ArrowLeft: "left" };
+      if (k[e.key]) { e.preventDefault(); if (!off) onMove(k[e.key], e.shiftKey ? 0.5 : step); }
+      else if (e.key === "[" && !off) onRotate(-15);
+      else if (e.key === "]" && !off) onRotate(15);
+    };
+    window.addEventListener("keydown", onWinKey);
+    return () => window.removeEventListener("keydown", onWinKey);
+  }, [open]);
   if (!works.length) return null;
   if (!open) return <button type="button" className="movepad-tab" onClick={() => setOpen(true)}>Move a work</button>;
   return (
