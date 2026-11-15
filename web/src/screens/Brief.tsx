@@ -158,13 +158,12 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
               onClick={() => { set({ city: c }); setChoosing(c); setTimeout(() => { setChoosing(null); go(1); }, reduceMotion() ? 120 : 420); }}>
               <span className="ob-choice-title">{c}</span>
               <span className="ob-choice-meta">{c === "Houston" ? "Texas" : "California"} · research market, surrounding cities included</span>
-              <span className="ob-choice-stats">{m ? <><span><b>{m.listings.toLocaleString()}</b> lease listings</span><span><b>{m.withTour.toLocaleString()}</b> with a 3D tour</span><span><b>{m.traced}</b> with a traced floor plan</span></> : <span className="faint">Loading the snapshot…</span>}</span>
+              <span className="ob-choice-stats">{m ? <><span><b>{m.listings.toLocaleString()}</b> lease listings</span><span><b>{m.withTour.toLocaleString()}</b> with a 3D tour</span></> : <span className="faint">Loading the snapshot…</span>}</span>
               <span className="ob-choice-mark" aria-hidden="true">{picked && choosing ? "✓" : "→"}</span>
               <span className="ob-choice-sweep" aria-hidden="true" />
             </button>;
           })}
         </div>,
-        markets["Los Angeles"] && markets["Los Angeles"].traced === 0 ? <p className="field-hint">Counts are listing records in the {new Date((markets.Houston?.snapshotRefDate ?? "2026-11-10") + "T00:00:00").toLocaleDateString("en-US", { month: "long", year: "numeric" })} CoStar snapshot. Placement checks need a traced floor plan; Los Angeles doesn’t have one yet, so you can browse listings and 3D tours there.</p> : null,
       ]} />;
       break;
     case "dates": {

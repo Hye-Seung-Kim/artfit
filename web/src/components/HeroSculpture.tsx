@@ -9,7 +9,7 @@ import { ContactShadows, useGLTF } from "@react-three/drei";
 import { makeStudioEnvironment } from "../viewer/artworkModel";
 
 const MODEL_URL = "/hero/finite-flame.glb";
-const PERSON_URL = "/hero/person-1.75m.glb";
+const PERSON_URL = "/hero/mannequin-1.75m.glb";
 const FINISHES = [
   { name: "Gloss black", color: "#050505", metalness: 1, roughness: 0.12 },
   { name: "Plaster white", color: "#efede8", metalness: 0, roughness: 0.75 },
@@ -56,12 +56,12 @@ function Room() {
   </group>;
 }
 
-/** A 1.75 m visitor for scale (model in metres, feet at y = 0, facing +z), turned toward the sculpture. */
+/** A 1.75 m mannequin for scale (model in metres, feet at y = 0, facing +z), turned toward the sculpture. */
 function Visitor({ x, z }: { x: number; z: number }) {
   const { scene } = useGLTF(PERSON_URL, false);
   const person = useMemo(() => {
     const o = scene.clone(true);
-    o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.material = new THREE.MeshStandardMaterial({ color: "#9fa29c", roughness: 0.85, metalness: 0 }); } });
+    o.traverse((c) => { const m = c as THREE.Mesh; if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } }); // keeps the file's own matte grey
     return o;
   }, [scene]);
   return <primitive object={person} position={[x, 0, z]} rotation-y={Math.atan2(-x, -z)} />;
