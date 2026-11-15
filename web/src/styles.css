@@ -1153,3 +1153,44 @@ button.name-link { padding: 0; min-height: 0; border: 0; background: transparent
 .rp-legend .lg-room { border: 1.5px dashed #50544f; background: transparent; }
 @media print { .rp-shots figure { break-inside: avoid; } }
 .rp-shots img { object-fit: cover; background: #e9ebe7; }
+
+/* Move pad on phones: compact, tucked in the top-right corner of the scan so the work stays visible. */
+@media (max-width: 760px) {
+  /* The scan's control bar wraps on phones, so anchor to the bottom (above Matterport's share/fullscreen icons). */
+  .movepad, .stage-views > .movepad { top: auto; bottom: 64px; right: 8px; width: 184px; gap: 6px; padding: 6px 8px 8px; }
+  .movepad-head { font-size: 11px; }
+  .movepad-head .faint { display: none; }
+  .movepad-close { min-height: 22px; width: 22px; font-size: 14px; }
+  .movepad-dial { grid-template-columns: 34px 1fr 34px; grid-template-rows: 32px 42px 32px; gap: 3px; }
+  .movepad-dial > button { font-size: 15px; }
+  .mp-center { grid-template-columns: 16px 1fr 16px; }
+  .mp-name { font-size: 12px; }
+  .mp-cycle { font-size: 14px; }
+  .movepad-row { gap: 4px; }
+  .movepad-row { flex-wrap: nowrap; }
+  .movepad-row > button { min-height: 30px; padding: 2px 6px; font-size: 11px; white-space: nowrap; }
+  .mp-steps button { min-height: 28px; padding: 2px 4px; font-size: 10px; white-space: nowrap; }
+  .movepad-tab, .stage-views > .movepad-tab { top: auto; bottom: 64px; right: 8px; min-height: 30px; padding: 4px 10px; font-size: 11px; }
+}
+
+/* Landing study: draggable handles. A pulse ring invites the first drag and disappears after it. */
+.artwork-study.interactive svg { touch-action: none; }
+.study-handle { cursor: grab; outline: none; }
+.study-handle.height { cursor: ns-resize; }
+.study-handle.clearance { cursor: ew-resize; }
+.study-handle.dragging { cursor: grabbing; }
+.study-hit { fill: transparent; }
+.study-knob { fill: #fff; stroke: #111; stroke-width: 1.5; transform-box: fill-box; transform-origin: center; transition: transform 160ms var(--ease-out); }
+.study-handle.clearance .study-knob { fill: var(--mint); }
+.study-arrow { fill: #111; pointer-events: none; }
+.study-handle:focus-visible .study-knob { stroke: var(--focus, #111); stroke-width: 3; }
+.study-handle.dragging .study-knob { transform: scale(1.25); }
+@media (hover: hover) and (pointer: fine) { .study-handle:hover .study-knob { transform: scale(1.18); } }
+.study-pulse { fill: none; stroke: #111; stroke-width: 1.2; transform-box: fill-box; transform-origin: center; pointer-events: none; animation: study-pulse 1.8s cubic-bezier(0.23, 1, 0.32, 1) infinite; }
+.study-handle.clearance .study-pulse { stroke: #1d7f69; animation-delay: .9s; }
+@keyframes study-pulse { from { transform: scale(.9); opacity: .7; } to { transform: scale(2.6); opacity: 0; } }
+.study-readout { font-size: 12px; font-weight: 700; fill: #111; paint-order: stroke; stroke: #f3f4f2; stroke-width: 4px; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .study-pulse { animation: none; transform: scale(1.6); opacity: .35; }
+  .study-knob { transition: none; }
+}

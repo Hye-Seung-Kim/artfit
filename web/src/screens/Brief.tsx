@@ -118,7 +118,6 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
     return <main className="page brief-page" id="main-content">
       <div className="brief-hero">
         <div className="hero-copy">
-          <div className="eyebrow">01 / The exhibition brief</div>
           <h1>Make room<br />for your art.</h1>
           <p className="hero-description">Extraordinary work needs the right space.<br className="desktop-break" /> Six short questions about your exhibition: one work or a group show. Then we look for where it belongs.</p>
           <div className="hero-actions">
@@ -126,7 +125,7 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
             <button type="button" className="text-button" onClick={() => { setBrief(EXAMPLE_BRIEF); setReached(STEPS.length - 1); go(STEPS.length - 1); }}>Use example exhibition</button>
           </div>
         </div>
-        <ArtworkStudy width={brief.artwork.widthM} depth={brief.artwork.depthM} height={brief.artwork.heightM} clearance={brief.preferredClearanceM} />
+        <HeroStudy />
       </div>
     </main>;
   }
@@ -291,4 +290,11 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
       <div className="ob-aside" aria-hidden={!showStudy}><ArtworkStudy width={studyWork.widthM} depth={studyWork.depthM} height={studyWork.heightM} clearance={brief.preferredClearanceM} focus={focus} /></div>
     </div>
   </main>;
+}
+
+/** Landing figure the visitor can play with; a toy only, it doesn't change the brief. */
+function HeroStudy() {
+  const [h, setH] = useState(2.4);
+  const [c, setC] = useState(1.5);
+  return <ArtworkStudy width={4} depth={3} height={h} clearance={c} handles={{ onHeight: setH, onClearance: setC }} />;
 }
