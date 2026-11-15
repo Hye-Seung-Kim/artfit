@@ -1,4 +1,6 @@
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { ScanCache, ScenarioError, type SpatialAnnotation } from "@artfit/geometry";
 import { KitError, loadKit, type Kit } from "./adapters/costarKit.js";
 import { InputError, evaluate_placement, inspect_space, plan_alternatives, search_spaces } from "./agent/tools.js";
@@ -14,7 +16,29 @@ import { loadAnnotation, saveAnnotation } from "./scenarios/store.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const app = express();
+app.set("trust proxy", 1); // behind Render's proxy: req.ip is the visitor
 app.use(express.json({ limit: "2mb" }));
+
+// Public deployment (ARTFIT_PUBLIC=1): the scan annotations, match reviews and kit reload are read-only, and the AI
+// routes (which spend the API key) are limited per visitor.
+const PUBLIC = process.env.ARTFIT_PUBLIC === "1";
+if (PUBLIC) {
+  const readOnly = (_req: express.Request, res: express.Response) => res.status(403).json({ error: "Read-only in the public demo.", kind: "ReadOnly" });
+  app.post("/api/kit/reload", readOnly);
+  app.put("/api/annotate/:id", readOnly);
+  app.post("/api/annotate/:id/match-review", readOnly);
+  const AI_LIMIT = Number(process.env.AI_RATE_LIMIT ?? 60), WINDOW_MS = 60 * 60 * 1000;
+  const hits = new Map<string, number[]>();
+  app.use(["/api/agent", "/api/workspace", "/api/report"], (req, res, next) => {
+    if (req.method !== "POST") return next();
+    const now = Date.now(), ip = req.ip ?? "?";
+    const recent = (hits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
+    if (recent.length >= AI_LIMIT) return res.status(429).json({ error: "Too many AI requests from this connection. Try again in a while.", kind: "RateLimited" });
+    recent.push(now); hits.set(ip, recent);
+    if (hits.size > 5000) hits.clear();
+    next();
+  });
+}
 
 let kit: Kit | null = null;
 let kitError: string | null = null;
@@ -23,7 +47,9 @@ const reqId = (req: express.Request) => String(req.body?.requestId ?? req.query.
 
 async function boot() {
   try {
-    kit = await loadKit(process.env.COSTAR_KIT_DIR ?? "", process.env.SNAPSHOT_REF_DATE ?? "2026-11-10");
+    const dir = process.env.COSTAR_KIT_DIR ?? "";
+    // A relative kit path (the deployed snapshot) is relative to the server package, wherever npm starts it from.
+    kit = await loadKit(dir && !path.isAbsolute(dir) ? path.resolve(import.meta.dirname, "..", dir) : dir, process.env.SNAPSHOT_REF_DATE ?? "2026-11-10");
     kitError = null;
     console.log(`[artfit] kit loaded in ${kit.audit.loadMs} ms: ${kit.spaces.length} space records`);
   } catch (e) {
@@ -133,6 +159,13 @@ app.post("/api/annotate/:id/match-review", handle((req) => {
   saveLedger(l);
   return { ledger: l };
 }));
+
+// Production: the built web app is served from the same origin as the API.
+const WEB_DIST = path.resolve(import.meta.dirname, "../../web/dist");
+if (fs.existsSync(path.join(WEB_DIST, "index.html"))) {
+  app.use(express.static(WEB_DIST, { index: false, maxAge: "1h" }));
+  app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(WEB_DIST, "index.html")));
+}
 
 app.listen(PORT, () => console.log(`[artfit] server on http://localhost:${PORT}`));
 boot();

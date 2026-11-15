@@ -101,3 +101,12 @@ The Workspace has a **Single work | Group show** switch. Group show plans one sp
 
 1. Collect and show short-term pricing from owners for the exhibition dates.
 2. Installations beyond floor-standing: hanging from ceilings or windows, and rooftop placement.
+
+## Deploy (Render)
+
+`render.yaml` is a Render blueprint: one always-on Node service. Express serves the API and the built web app from one origin.
+
+- **Data:** the service reads `server/kit-snapshot/`, a 12 MB extract of the CoStar kit built by `npm run snapshot -w server`. It holds only active lease listings, the properties and tenancy dates they reference, and the fields ArtFit uses. Every contact, brokerage and tenant name is removed. Re-run the script if the kit changes.
+- **Public mode** (`ARTFIT_PUBLIC=1`): scan annotation, match review and kit reload return 403. AI routes are limited to `AI_RATE_LIMIT` (default 60) requests per visitor per hour.
+- **Secrets** are set in the Render dashboard: `LLM_API_KEY`, `VITE_MATTERPORT_SDK_KEY` (read at build time). Add the production domain to the Matterport SDK key's allowed domains.
+- **Domain (GoDaddy):** add `artfitspace.us` and `www.artfitspace.us` in Render → Settings → Custom Domains. At GoDaddy, set the `@` A record to the IP Render shows (currently `216.24.57.1`) and the `www` CNAME to `<service>.onrender.com`.

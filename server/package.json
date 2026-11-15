@@ -9,7 +9,9 @@
     "draft-annotations": "tsx --env-file=../.env scripts/draftFromModelApi.ts",
     "audit": "tsx --env-file=../.env scripts/audit.ts",
     "test": "vitest run",
-    "eval": "tsx --env-file=../.env scripts/aiEval.ts"
+    "eval": "tsx --env-file=../.env scripts/aiEval.ts",
+    "snapshot": "tsx --env-file=../.env scripts/buildSnapshot.ts",
+    "start:prod": "tsx src/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",

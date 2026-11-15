@@ -3,6 +3,7 @@
 // the artwork, its clearance buffer and conflict regions are real scene objects in Showcase coordinates.
 // The scan's captured contents are never edited.
 import { useEffect, useRef, useState } from "react";
+import "./threeGlobal"; // must run before the web component module
 import "@matterport/webcomponent";
 import { pointInPolygon, type Vec2 } from "@artfit/geometry";
 import { ARTWORK_COMPONENT, artworkComponentFactory, type ArtworkSceneSpec } from "./artworkScene";
@@ -107,6 +108,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
         }));
         setStatus({ kind: "playing" });
       } catch (e) {
+        console.error("[artfit] Matterport setup failed", e);
         if (!cancelled) setStatus({ kind: "error", reason: (e as Error).message });
       }
     })();
