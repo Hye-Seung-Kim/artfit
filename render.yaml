@@ -14,8 +14,6 @@ services:
         value: "22"
       - key: ARTFIT_PUBLIC
         value: "1"
-      - key: VITE_PUBLIC_DEMO
-        value: "1"
       - key: COSTAR_KIT_DIR
         value: kit-snapshot   # relative to server/
       - key: SNAPSHOT_REF_DATE

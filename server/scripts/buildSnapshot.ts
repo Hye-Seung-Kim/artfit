@@ -1,7 +1,7 @@
 // Builds the slim kit snapshot the public deployment ships with (server/kit-snapshot/), from the local CoStar kit.
 // Same file layout as the kit so loadKit() reads it unchanged, but only active lease listings, the properties and
-// tenancy records they reference, and only the fields ArtFit uses. People and companies are removed: no listing or
-// property contacts, no brokerage name, no tenant names.
+// tenancy records they reference, and only the fields ArtFit uses. Listing contacts and brokerage are kept for
+// "Who to contact" and the plan report (the kit's anonymized placeholders); tenant names are left out.
 //   npm run snapshot -w server        (reads COSTAR_KIT_DIR from ../.env)
 import fs from "node:fs";
 import path from "node:path";
@@ -25,11 +25,12 @@ fs.mkdirSync(path.join(OUT, "data"), { recursive: true });
 fs.mkdirSync(path.join(OUT, "schemas"), { recursive: true });
 fs.copyFileSync(path.join(SRC, "schemas", "enums.json"), path.join(OUT, "schemas", "enums.json"));
 
-// Listings: active lease listings only, contacts and brokerage removed.
+// Listings: active lease listings only.
 const SPACE_KEYS = ["id", "propertyId", "suite", "floorName", "propertyFloorId", "isFullFloor", "isExecutiveSuite", "spaceUse", "spaceType",
   "squareFeetMax", "squareFeetMin", "availableOnDate", "availabilityType", "dateOnMarket", "dateOffMarket", "isInventoryOffMarket",
   "isLeasePending", "leaseTermType", "leaseTermLow", "leaseTermHigh", "leaseTermThru", "rateLow", "rateHigh", "rateBasis", "serviceType",
   "monetaryUnit", "floorPlan"];
+const contact = (c: any) => pick(c, ["contactRole", "firstName", "lastName", "locationName", "phoneNumber", "emailAddress"]);
 const needed = new Set<number>();
 const listingOut: string[] = [];
 for await (const l of lines(path.join(SRC, "data", "commercial-listing-summary.jsonl"))) {
@@ -39,6 +40,10 @@ for await (const l of lines(path.join(SRC, "data", "commercial-listing-summary.j
   listingOut.push(JSON.stringify({
     ...pick(l, ["id", "listingStatus", "listingType", "propertyId", "buildingName", "certifiedFreshDate", "listingStatusUpdatedDate"]),
     attachments: mpAttachments(l.attachments),
+    // Contacts for "Who to contact" and the plan report (anonymized placeholders in the hackathon kit).
+    brokerageCompanyName: l.brokerageCompanyName,
+    listingContacts: (l.listingContacts ?? []).map(contact),
+    propertyContacts: (l.propertyContacts ?? []).map(contact),
     forLeaseSummary: { askingRateMeasurementType: l.forLeaseSummary.askingRateMeasurementType, spaces },
   }));
 }

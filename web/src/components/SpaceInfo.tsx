@@ -46,9 +46,7 @@ export function SpaceInfo({ data, onClose }: { data: SpaceInfoData; onClose: () 
               </div>}
             </li>
           ))}
-        </ul> : <p className="faint">{import.meta.env.VITE_PUBLIC_DEMO === "1"
-          ? "Contacts are left out of the public demo. They come from the CoStar listing record."
-          : <>No contacts in the listing record. {data.brokerageCompany ? `Brokerage: ${data.brokerageCompany}.` : ""}</>}</p>}
+        </ul> : <p className="faint">No contacts in the listing record. {data.brokerageCompany ? `Brokerage: ${data.brokerageCompany}.` : ""}</p>}
         {primary?.email && <a className="si-cta" href={mail(primary.email)}>{data.inquiry ? "Email the agent’s inquiry" : "Email about a short-term exhibition"}<span aria-hidden="true">↗</span></a>}
         <p className="faint si-note">From the CoStar data kit (Nov 2026 snapshot). In this hackathon kit, names, emails and phone numbers are anonymized placeholders.</p>
       </section>
