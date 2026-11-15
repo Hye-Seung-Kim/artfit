@@ -317,7 +317,7 @@ Templates (id | outcome | text):
 ${AGENT_TEMPLATES.map((t) => `${t.id} | ${t.outcome} | ${t.text}`).join("\n")}`;
 
 export function llmConfigured() {
-  return (process.env.LLM_PROVIDER === "anthropic" && !!process.env.LLM_API_KEY) || !!process.env.ANTHROPIC_API_KEY;
+  return ((!process.env.LLM_PROVIDER || process.env.LLM_PROVIDER === "anthropic") && !!process.env.LLM_API_KEY) || !!process.env.ANTHROPIC_API_KEY;
 }
 
 export async function runAgent(kit: Kit, ctx: ToolCtx, req: { message: string; brief?: unknown }, emit: (e: AgentEvent) => void): Promise<void> {

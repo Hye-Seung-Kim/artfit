@@ -152,7 +152,7 @@ export function PlanReport({ input, onClose }: { input: ReportInput; onClose: ()
       </div>
       <article className="report">
         <header className="rp-head">
-          <div className="rp-brand"><img src="/brand/artfit-symbol.svg" alt="" /><img src="/brand/artfit-wordmark.svg" alt="ArtFit" /></div>
+          <div className="rp-brand"><img src="/brand/artfit-symbol.svg" alt="" /><img src="/brand/artfit-wordmark-bold.svg" alt="ArtFit" /></div>
           <div className="eyebrow">Exhibition plan · {today}</div>
           <h1>{title}<br /><span>at {space.name}</span></h1>
           <p className="rp-sub">{space.address ?? ""}{space.address ? " · " : ""}{brief.exhibitionStart} → {brief.exhibitionEnd}</p>

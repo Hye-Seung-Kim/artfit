@@ -43,7 +43,7 @@ export default function App() {
     <div className="app">
       <a className="skip-link" href="#main-content">Skip to content</a>
       <header className="topbar">
-        <button className="brand" onClick={() => setScreen("brief")} aria-label="ArtFit — exhibition brief"><img className="brand-symbol" src="/brand/artfit-symbol.svg" alt="" /><span className="brand-text"><img className="wordmark" src="/brand/artfit-wordmark.svg" alt="ArtFit" /></span></button>
+        <button className="brand" onClick={() => setScreen("brief")} aria-label="ArtFit — exhibition brief"><img className="brand-symbol" src="/brand/artfit-symbol.svg" alt="" /><span className="brand-text"><img className="wordmark" src="/brand/artfit-wordmark-bold.svg" alt="ArtFit" /></span></button>
         <nav className="steps" aria-label="Exhibition planning steps">
           <button className={screen === "brief" ? "on" : ""} aria-current={screen === "brief" ? "step" : undefined} onClick={() => setScreen("brief")}><span className="step-number">01</span>Brief</button>
           <button className={screen === "discover" ? "on" : ""} aria-current={screen === "discover" ? "step" : undefined} disabled={!result} onClick={() => setScreen("discover")}><span className="step-number">02</span>Discover</button>
@@ -54,7 +54,7 @@ export default function App() {
       {screen === "brief" && <Brief brief={brief} setBrief={setBrief} onSearch={search} busy={busy} error={error} />}
       {screen === "discover" && result && <Discover result={result} brief={brief} briefChanged={searchedKey !== searchKey(brief)} onSearchAgain={search} searching={busy} onBack={() => setScreen("brief")} onOpen={(ids, layouts) => { setSpaceIds(ids); setAgentLayouts(layouts ?? null); setScreen("workspace"); }} />}
       {screen === "workspace" && spaceIds.length > 0 && <Workspace key={spaceIds.join("|") + (agentLayouts ? "|agent" : "")} spaceIds={spaceIds} initialLayouts={agentLayouts} brief={brief} setBrief={setBrief} onBack={() => setScreen("discover")} />}
-      {screen !== "workspace" && <footer className="site-footer"><span className="footer-mark"><img className="footer-symbol" src="/brand/artfit-symbol.svg" alt="" /><img className="footer-wordmark" src="/brand/artfit-wordmark.svg" alt="ArtFit" /></span><div className="footer-copy"><span>Art, in the right place.</span><span>CoStar data kit · November 2026 snapshot</span><span>Preliminary spatial planning. Conditions need verification.</span></div></footer>}
+      {screen !== "workspace" && <footer className="site-footer"><span className="footer-mark"><img className="footer-symbol" src="/brand/artfit-symbol.svg" alt="" /><img className="footer-wordmark" src="/brand/artfit-wordmark-bold.svg" alt="ArtFit" /></span><div className="footer-copy"><span>Art, in the right place.</span><span>CoStar data kit · November 2026 snapshot</span><span>Preliminary spatial planning. Conditions need verification.</span></div></footer>}
     </div>
   );
 }

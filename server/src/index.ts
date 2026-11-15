@@ -21,7 +21,8 @@ app.use(express.json({ limit: "2mb" }));
 
 // Public deployment (ARTFIT_PUBLIC=1): the scan annotations, match reviews and kit reload are read-only, and the AI
 // routes (which spend the API key) are limited per visitor.
-const PUBLIC = process.env.ARTFIT_PUBLIC === "1";
+// On by default on Render (it sets RENDER=true); ARTFIT_PUBLIC=0 turns it off.
+const PUBLIC = process.env.ARTFIT_PUBLIC === "1" || (!!process.env.RENDER && process.env.ARTFIT_PUBLIC !== "0");
 if (PUBLIC) {
   const readOnly = (_req: express.Request, res: express.Response) => res.status(403).json({ error: "Read-only in the public demo.", kind: "ReadOnly" });
   app.post("/api/kit/reload", readOnly);
@@ -47,7 +48,8 @@ const reqId = (req: express.Request) => String(req.body?.requestId ?? req.query.
 
 async function boot() {
   try {
-    const dir = process.env.COSTAR_KIT_DIR ?? "";
+    // Unset → the snapshot committed with the repo (server/kit-snapshot), so a deploy works without extra settings.
+    const dir = process.env.COSTAR_KIT_DIR || "kit-snapshot";
     // A relative kit path (the deployed snapshot) is relative to the server package, wherever npm starts it from.
     kit = await loadKit(dir && !path.isAbsolute(dir) ? path.resolve(import.meta.dirname, "..", dir) : dir, process.env.SNAPSHOT_REF_DATE ?? "2026-11-10");
     kitError = null;
@@ -73,7 +75,7 @@ function handle(fn: (req: express.Request) => unknown | Promise<unknown>) {
   };
 }
 
-app.get("/api/health", handle(() => ({ ok: !!kit, kitError, audit: kit?.audit && { ...kit.audit, parseErrors: kit.audit.parseErrors.length }, tools: TOOL_NAMES, llm: process.env.LLM_PROVIDER || null })));
+app.get("/api/health", handle(() => ({ ok: !!kit, kitError, publicMode: PUBLIC, aiConfigured: llmConfigured(), audit: kit?.audit && { ...kit.audit, parseErrors: kit.audit.parseErrors.length }, tools: TOOL_NAMES, llm: process.env.LLM_PROVIDER || null })));
 app.post("/api/kit/reload", handle(async () => { await boot(); return { ok: !!kit, kitError }; }));
 
 // Spec §10.1 routes

@@ -717,17 +717,17 @@ table.kv tr:last-child td { border-bottom: 0; }
 .model-card .warn .text-button { display: inline; }
 
 /* Brand: supplied symbol + wordmark (public/brand). */
-.brand { flex-direction: row; align-items: center; gap: 12px; }
+.brand { flex-direction: row; align-items: center; gap: 14px; }
 .brand-symbol { display: block; height: 46px; width: auto; }
 .brand-text { display: flex; flex-direction: column; gap: 6px; }
-img.wordmark { display: block; height: 22px; width: auto; }
+img.wordmark { display: block; height: 34px; width: auto; } /* bold wordmark, cap height ≈ ¾ of the symbol */
 .footer-mark { display: inline-flex; align-items: center; gap: 16px; }
 .footer-symbol { display: block; height: 58px; width: auto; }
-.footer-wordmark { display: block; height: 28px; width: auto; }
+.footer-wordmark { display: block; height: 42px; width: auto; }
 @media (max-width: 760px) {
   .brand-symbol { height: 38px; }
-  img.wordmark { height: 18px; }
-  .footer-symbol { height: 44px; } .footer-wordmark { height: 21px; }
+  img.wordmark { height: 27px; }
+  .footer-symbol { height: 44px; } .footer-wordmark { height: 32px; }
 }
 @media (max-width: 540px) {
   .brand { flex-direction: row; align-items: center; gap: 10px; }
@@ -1097,7 +1097,7 @@ button.name-link { padding: 0; min-height: 0; border: 0; background: transparent
 .rp-toolbar button { min-height: 36px; padding: 6px 14px; font-size: 12px; gap: 10px; }
 .report { width: min(900px, calc(100vw - 32px)); margin: 24px auto 64px; padding: 48px 56px; background: #fff; color: var(--ink); box-shadow: 0 1px 0 #cfd3cc; }
 .rp-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
-.rp-brand img:first-child { height: 30px; } .rp-brand img:last-child { height: 15px; }
+.rp-brand img:first-child { height: 30px; } .rp-brand img:last-child { height: 22px; }
 .rp-head h1 { margin: 10px 0 8px; font-size: 40px; line-height: 1.05; letter-spacing: -.045em; }
 .rp-head h1 span { color: var(--ink-2); font-weight: 700; }
 .rp-sub { font-size: 14px; color: var(--ink-2); }
