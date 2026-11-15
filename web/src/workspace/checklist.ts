@@ -3,9 +3,9 @@ import { fmtM } from "@artfit/geometry";
 import type { EvalResult } from "../api";
 
 export function buildChecklist(args: {
-  inspect: any; result: EvalResult | null; brief: any; requiredC: number; selectedOption: string | null;
+  inspect: any; result: EvalResult | null; brief: any; requiredC: number; selectedOption: string | null; peopleLine?: string | null;
 }): string {
-  const { inspect, result, brief, requiredC, selectedOption } = args;
+  const { inspect, result, brief, requiredC, selectedOption, peopleLine } = args;
   const c = inspect.candidate;
   const a = inspect.annotation;
   const e = result?.evaluation;
@@ -53,6 +53,7 @@ export function buildChecklist(args: {
   push(`- Fixing: are nails, screws, rails or hanging points allowed on the walls, ceiling or roof? Who approves, and what must be restored afterwards? (ArtFit only models floor-standing work.)`);
   push(`- Light: color temperature of the existing fixtures, daylight from windows, and how it changes over the day and across ${brief.exhibitionStart || "the"} → ${brief.exhibitionEnd || "exhibition"} dates.`);
   push(`- Floor: material and color (concrete, carpet, tile, wood), stains or markings, and whether it can be covered or protected.`);
+  if (peopleLine) push(peopleLine);
   push(`- Other works: will other artworks or uses share the space? How close will they be to this piece and its ${requiredC} m clearance?`);
   push();
   push("LEASE AND USE");

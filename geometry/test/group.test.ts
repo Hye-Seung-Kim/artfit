@@ -53,6 +53,17 @@ describe("group evaluation", () => {
     expect(e.works.every((w) => w.reachable)).toBe(true);
   });
 
+  it("without a set order, visits works in the shortest walk from the entrance (no out-and-back)", () => {
+    // Entrance on the south wall at x=0; works far right, near, and middle.
+    const ws = [work("far", "A", 1, 1), work("near", "B", 1, 1), work("mid", "C", 1, 1)];
+    const poses = { far: { x: 5, z: 0, rotDeg: 0 }, near: { x: -1, z: 1, rotDeg: 0 }, mid: { x: 2, z: 0, rotDeg: 0 } };
+    const suggested = evaluateGroup(room, ws, poses);
+    const forced = evaluateGroup(room, ws, poses, ["far", "near", "mid"]);
+    expect(suggested.route.order).not.toEqual(["far", "near", "mid"]);
+    expect(suggested.route.lengthM!).toBeLessThan(forced.route.lengthM!);
+    expect(forced.route.order).toEqual(["far", "near", "mid"]); // a user order is followed as given
+  });
+
   it("a work walled in by others is unreachable", () => {
     // A tiny pocket: floor 4 × 4 with work x blocking the only gap to work y's viewing spots.
     const pocket = ann([{ x: -2, z: -2 }, { x: 2, z: -2 }, { x: 2, z: 2 }, { x: -2, z: 2 }], [obs("door", "entrance_zone", rect(0.8, 0.4, 0, 1.8))]);

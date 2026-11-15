@@ -28,10 +28,21 @@ export function validateBrief(b: any): ExhibitionBrief {
   if (b.minimumClearanceM !== null && b.minimumClearanceM > b.preferredClearanceM + EPS) throw new InputError("minimum clearance must be <= preferred clearance");
   const prefs = Array.isArray(b.spaceUsePreferences) ? b.spaceUsePreferences.filter((u: unknown) => typeof u === "string" && SPACE_USES.includes(u as string)) : [];
   const c = b.conditions ?? {};
+  let works: ExhibitionBrief["works"];
+  if (b.works != null) {
+    if (!Array.isArray(b.works) || b.works.length < 1 || b.works.length > 12) throw new InputError("works must list 1–12 artworks");
+    works = b.works.map((w: any, i: number) => {
+      for (const k of ["widthM", "depthM", "heightM"]) if (!(isFiniteNum(w?.[k]) && w[k] > 0 && w[k] < 100)) throw new InputError(`works[${i}].${k} must be finite and > 0`);
+      if (w.clearanceM != null && !(isFiniteNum(w.clearanceM) && w.clearanceM >= 0 && w.clearanceM < 20)) throw new InputError(`works[${i}].clearanceM must be null or finite >= 0`);
+      return { id: String(w.id ?? `w${i + 1}`).slice(0, 80), title: String(w.title ?? "").slice(0, 120), artist: String(w.artist ?? "").slice(0, 80),
+        widthM: w.widthM, depthM: w.depthM, heightM: w.heightM, clearanceM: w.clearanceM ?? null, required: w.required !== false };
+    });
+  }
   return {
     city: b.city, exhibitionStart: b.exhibitionStart.slice(0, 10), exhibitionEnd: b.exhibitionEnd.slice(0, 10),
     budget: b.budget, budgetCurrency: typeof b.budgetCurrency === "string" ? b.budgetCurrency : "USD",
     artwork: { widthM: a.widthM, depthM: a.depthM, heightM: a.heightM },
+    ...(works ? { works } : {}),
     preferredClearanceM: b.preferredClearanceM, minimumClearanceM: b.minimumClearanceM, spaceUsePreferences: prefs,
     conditions: {
       // MVP: strict modes are not built (spec §0.0). They are accepted only as false.
@@ -63,6 +74,18 @@ function areaScreen(c: SpaceCandidate, brief: ExhibitionBrief) {
 
 const IDLE_ORDER = { strong: 0, moderate: 1, weak: 2, unknown: 3 } as const;
 
+/**
+ * Listed (property-level) clear height vs the tallest work. Context for ranking only: the ceiling right above a
+ * placement can be lower (beams, ducts, lights), so "clears" never becomes a height pass.
+ */
+function heightContext(c: SpaceCandidate, tallestM: number) {
+  const h = c.ceilingHeightM;
+  if (h == null) return "unknown" as const;
+  if (h < tallestM) return "listed_below_tallest" as const;
+  if (h < tallestM + 0.5) return "listed_tight" as const;
+  return "listed_clears" as const;
+}
+
 /** search_spaces (spec §5.1) — all counts computed from loaded records. */
 export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
   const brief = validateBrief(briefIn);
@@ -85,15 +108,19 @@ export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
     M.push({ c, dateStatus: c.availableOnDate ? "reported_available_on_or_before_start" : c.availabilityType ? `relative_${c.availabilityType}` : "date_not_confirmed" });
   }
   const ledgers = new Map(listLedgers().map((l) => [l.spaceId, l]));
+  const tallestM = Math.max(brief.artwork.heightM, ...(brief.works ?? []).map((w) => w.heightM));
+  const heightCounts: Record<string, number> = {};
   const areaCounts: Record<string, number> = {};
   const rows = M.map(({ c, dateStatus }) => {
     const area = areaScreen(c, brief);
     areaCounts[area.status] = (areaCounts[area.status] ?? 0) + 1;
+    const height = heightContext(c, tallestM);
+    heightCounts[height] = (heightCounts[height] ?? 0) + 1;
     const ledger = ledgers.get(c.id) ?? { spaceId: c.id, evidenceVersion: 0, match: null, entries: [] };
     const conditions = assessConditions(c, ledger);
     const hasModel = c.matterportModelIds.length > 0;
     const sp = hasModel ? spatialStatus(c.id) : null;
-    return { c, dateStatus, area, conditions, hasModel, hasAnnotation: !!sp?.annotation, matchVerified: !!sp?.matchVerified, spatiallyVerified: !!sp?.spatiallyVerified, matchProposed: !!ledger.match };
+    return { c, dateStatus, area, height, conditions, hasModel, hasAnnotation: !!sp?.annotation, matchVerified: !!sp?.matchVerified, spatiallyVerified: !!sp?.spatiallyVerified, matchProposed: !!ledger.match };
   });
   const K = rows.filter((r) => r.hasModel);
   const V = rows.filter((r) => r.spatiallyVerified);
@@ -105,8 +132,11 @@ export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
   const vac = (r: (typeof rows)[number]) => (r.conditions.occupancy.state === "verified" ? (r.conditions.occupancy.value === "vacant" ? "q" : "m") : "n");
   const fur = (r: (typeof rows)[number]) => (r.conditions.furnishing.state === "verified" ? (r.conditions.furnishing.value === "unfurnished" ? "q" : "m") : "n");
   const areaRank = (s: string) => (s === "below_requested_footprint" ? 1 : 0);
+  const heightRank = (s: string) => (s === "listed_below_tallest" ? 1 : 0);
+  // Fits on paper first, then listed ceiling not below the tallest work, then the long-idle signal. Nothing is removed.
   rows.sort((a, b) =>
     areaRank(a.area.status) - areaRank(b.area.status)
+    || heightRank(a.height) - heightRank(b.height)
     || IDLE_ORDER[a.c.idleSignal] - IDLE_ORDER[b.c.idleSignal]
     || (b.c.monthsOnMarket ?? -1) - (a.c.monthsOnMarket ?? -1)
     || a.c.id.localeCompare(b.c.id));
@@ -124,7 +154,7 @@ export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
     funnel: {
       N: { count: N.length, label: `Marketed lease-space records in research market ${market} (${brief.city})` },
       M: { count: M.length, label: "Selected space use · not lease-pending · date not after exhibition start", reasons: mReasons, useUnknownBucket: useUnknown.length },
-      M1: { count: rows.length, label: "Area-prioritized (no records removed; rounded advertised area is not proof of fit or misfit)", areaScreen: areaCounts },
+      M1: { count: rows.length, label: "Area-prioritized (no records removed; rounded advertised area is not proof of fit or misfit)", areaScreen: areaCounts, heightScreen: heightCounts, tallestM },
       K: { count: K.length, label: "With ≥1 Matterport association to the resolved property (building-level link)" },
       V: { count: V.length, label: "Exact suite-region match + reviewed annotation + passed scale/coverage checks" },
     },
@@ -138,7 +168,8 @@ export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
       suite: r.c.suite, spaceUse: r.c.spaceUse, listedAreaSqFt: r.c.listedAreaSqFt, availableOnDate: r.c.availableOnDate,
       availabilityType: r.c.availabilityType, dateStatus: r.dateStatus, rate: r.c.rate, isExecutiveSuite: r.c.isExecutiveSuite,
       monthsOnMarket: r.c.monthsOnMarket, idleSignal: r.c.idleSignal, idleNote: r.c.idleNote, lastRecordedTenantLeftAt: r.c.lastRecordedTenantLeftAt,
-      tenancyMatch: r.c.tenancyMatch, areaScreen: r.area.status, matterportModelCount: r.c.matterportModelIds.length,
+      tenancyMatch: r.c.tenancyMatch, areaScreen: r.area.status,
+      listedAreaM2: r.area.listedAreaM2, requiredAreaM2: r.area.requiredM2, ceilingHeightM: r.c.ceilingHeightM, heightContext: r.height, matterportModelCount: r.c.matterportModelIds.length,
       matterportLinkLevel: r.c.matterportLinkLevel, hasAnnotation: r.hasAnnotation, matchProposed: r.matchProposed,
       matchVerified: r.matchVerified, spatiallyVerified: r.spatiallyVerified,
       conditionLabels: {

@@ -3,14 +3,18 @@
 // AI request or "use this layout", is one undoable step. Real artwork sizes are only edited by the user here.
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  directionVector, evaluateGroup, suggestGroupPlans, summarizeBudget, toMeters, workBody,
+  directionVector, evaluateGroup, type BriefWork, suggestGroupPlans, summarizeBudget, toMeters, workBody,
   type CostItem, type CostStatus, type GroupEvaluation, type GroupPlan, type GroupWork, type Length, type PlanPriority, type Pose, type SpatialAnnotation, type Vec2,
 } from "@artfit/geometry";
+import type { ArtworkModel, ArtworkPhoto } from "../viewer/artworkModel";
+import { OccupancyCard, useOccupancy } from "./Occupancy";
 
 export type WorkSpec = Omit<GroupWork, "pose" | "locked">;
 export interface GroupDoc {
   works: WorkSpec[];
   order: string[];
+  /** true once the user (or an AI request) set the viewing order; otherwise the shortest-walk order is suggested. */
+  orderSet?: boolean;
   costs: CostItem[];
   budget: number | null;
   currency: string;
@@ -36,28 +40,31 @@ const venueItem = (): CostItem => ({ id: "venue", label: "Venue: short-term rent
 
 export function exampleGroup(first: { widthM: number; depthM: number; heightM: number; clearanceM: number }): Pick<GroupDoc, "works" | "costs" | "order"> {
   const works: WorkSpec[] = [
-    { id: "w-you", artist: "You", title: "Your work", ...first, required: true },
-    { id: "w-minji-1", artist: "Minji (example)", title: "Tide", widthM: 2, depthM: 1.5, heightM: 1.8, clearanceM: 1.2, required: true },
-    { id: "w-minji-2", artist: "Minji (example)", title: "Low Water", widthM: 1.2, depthM: 1.2, heightM: 0.9, clearanceM: 1, required: false },
-    { id: "w-jun", artist: "Jun (example)", title: "Column Study", widthM: 0.8, depthM: 0.8, heightM: 2.6, clearanceM: 1, required: true },
+    { id: "w-1", artist: "Artist 1", title: "Work 1", ...first, required: true },
+    { id: "w-2", artist: "Artist 2", title: "Work 2", widthM: 2, depthM: 1.5, heightM: 1.8, clearanceM: 1.2, required: true },
+    { id: "w-3", artist: "Artist 2", title: "Work 3", widthM: 1.2, depthM: 1.2, heightM: 0.9, clearanceM: 1, required: false },
+    { id: "w-4", artist: "Artist 3", title: "Work 4", widthM: 0.8, depthM: 0.8, heightM: 2.6, clearanceM: 1, required: true },
   ];
   return {
     works,
     order: works.map((w) => w.id),
     costs: [
       venueItem(),
-      { id: newId("c"), label: "Transport: Tide", workId: "w-minji-1", amount: 650, currency: "USD", status: "quoted" },
-      { id: newId("c"), label: "Install crew: Column Study", workId: "w-jun", amount: 400, currency: "USD", status: "estimate" },
+      { id: newId("c"), label: "Transport: Work 2", workId: "w-2", amount: 650, currency: "USD", status: "quoted" },
+      { id: newId("c"), label: "Install crew: Work 4", workId: "w-4", amount: 400, currency: "USD", status: "estimate" },
       { id: newId("c"), label: "Plinth and lighting rental", workId: null, amount: null, currency: "USD", status: "unknown" },
     ],
   };
 }
 
-export function useGroupPlanner(opts: { spaceIds: string[]; active: string; seed: { widthM: number; depthM: number; heightM: number; clearanceM: number }; budget: number | null; currency: string }) {
+export function useGroupPlanner(opts: { spaceIds: string[]; active: string; seed: { widthM: number; depthM: number; heightM: number; clearanceM: number }; budget: number | null; currency: string; works?: BriefWork[] }) {
   const [hist, setHist] = useState<Hist>(() => {
+    // Works come from the brief (onboarding); a solo brief starts with the one work.
+    const works: WorkSpec[] = opts.works?.length
+      ? opts.works.map((w, i) => ({ id: w.id, artist: w.artist.trim() || "Artist not set", title: w.title.trim() || `Work ${i + 1}`, widthM: w.widthM, depthM: w.depthM, heightM: w.heightM, clearanceM: w.clearanceM ?? opts.seed.clearanceM, required: w.required }))
+      : [{ id: "w-1", artist: "Artist 1", title: "Work 1", ...opts.seed, required: true }];
     const doc: GroupDoc = {
-      works: [{ id: "w-you", artist: "You", title: "Your work", ...opts.seed, required: true }],
-      order: ["w-you"], costs: [venueItem()], budget: opts.budget, currency: opts.currency, bySpace: {},
+      works, order: works.map((w) => w.id), costs: [venueItem()], budget: opts.budget, currency: opts.currency, bySpace: {},
     };
     return { past: [], present: { doc, label: "Group started" }, future: [], version: 1 };
   });
@@ -90,12 +97,15 @@ export function useGroupPlanner(opts: { spaceIds: string[]; active: string; seed
       const bySpace = Object.fromEntries(Object.entries(doc.bySpace).map(([k, s]) => [k, { poses: Object.fromEntries(Object.entries(s.poses).filter(([wid]) => wid !== id)), locked: s.locked.filter((x) => x !== id) }]));
       commit({ ...doc, works: doc.works.filter((x) => x.id !== id), order: doc.order.filter((x) => x !== id), costs: doc.costs.filter((c) => c.workId !== id), bySpace }, `Removed ${w?.title ?? "work"} (by you)`);
     },
-    setOrder(order: string[], label = "Viewing order changed") { commit({ ...doc, order: [...order, ...doc.order.filter((x) => !order.includes(x))] }, label); },
+    setOrder(order: string[], label = "Viewing order changed") { commit({ ...doc, order: [...order, ...doc.order.filter((x) => !order.includes(x))], orderSet: true }, label); },
+    useSuggestedOrder() { commit({ ...doc, orderSet: false }, "Using the suggested viewing order"); },
+    /** The order to give the planner: only what the user actually set. */
+    orderForPlanning: doc.orderSet ? doc.order : undefined,
     setCosts(costs: CostItem[]) { commit({ ...doc, costs }, "Costs updated"); },
     setBudget(budget: number | null) { commit({ ...doc, budget }, "Budget updated"); },
     loadExample() {
       const ex = exampleGroup(opts.seed);
-      commit({ ...doc, ...ex, bySpace: {} }, "Loaded the example group");
+      commit({ ...doc, ...ex, orderSet: false, bySpace: {} }, "Loaded the example group");
     },
   };
 }
@@ -105,7 +115,10 @@ export type GroupPlanner = ReturnType<typeof useGroupPlanner>;
 
 const COST_STATUS: Record<CostStatus, string> = { quoted: "Quoted", estimate: "My estimate", unknown: "Unknown" };
 
-export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }: { g: GroupPlanner; selected: string | null; onSelect: (id: string | null) => void; viewRight: () => Vec2 | null; viewLabel: string }) {
+export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel, looks = {}, onLookFile, onLookRemove, lookMsg }: {
+  g: GroupPlanner; selected: string | null; onSelect: (id: string | null) => void; viewRight: () => Vec2 | null; viewLabel: string;
+  looks?: Record<string, WorkLook>; onLookFile?: (workId: string, file: File) => void; onLookRemove?: (workId: string) => void; lookMsg?: string | null;
+}) {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ artist: "", title: "", widthM: 1, depthM: 1, heightM: 1.5, clearanceM: 1, required: true });
   const sel = g.works.find((w) => w.id === selected) ?? null;
@@ -120,7 +133,7 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }:
   return (
     <>
       <div className="card">
-        <div className="row group-head"><h3>Works in the show</h3><button type="button" className="text-button" onClick={g.loadExample}>Load example group</button></div>
+
         <ol className="work-list">
           {g.works.map((w) => (
             <li key={w.id}>
@@ -133,7 +146,7 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }:
           ))}
         </ol>
         {!adding
-          ? <button type="button" onClick={() => setAdding(true)}>Add a work</button>
+          ? <button type="button" onClick={() => setAdding(true)}>+ Add artwork</button>
           : <form className="add-work" onSubmit={(e) => { e.preventDefault(); if (!draft.artist.trim() || !draft.title.trim()) return; const id = g.addWork({ ...draft, artist: draft.artist.trim(), title: draft.title.trim() }); setAdding(false); onSelect(id); }}>
               <label>Artist<input value={draft.artist} onChange={(e) => setDraft({ ...draft, artist: e.target.value })} required /></label>
               <label>Title<input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} required /></label>
@@ -144,6 +157,7 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }:
               <label className="check"><input type="checkbox" checked={draft.required} onChange={(e) => setDraft({ ...draft, required: e.target.checked })} /> Must be in the show</label>
               <div className="row"><button type="submit" className="primary">Add</button><button type="button" className="text-button" onClick={() => setAdding(false)}>Cancel</button></div>
             </form>}
+
       </div>
       {sel && (
         <div className="card">
@@ -151,6 +165,18 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }:
           <p className="faint">Real size. Only you change it; planning and the AI never resize or drop a work.</p>
           <div className="dims3">
             {(["widthM", "depthM", "heightM"] as const).map((k) => <label key={k}>{k === "widthM" ? "W" : k === "depthM" ? "D" : "H"} (m)<input type="number" min={0.1} step={0.05} value={sel[k]} onChange={(e) => Number(e.target.value) > 0 && g.updateWork(sel.id, { [k]: Number(e.target.value) }, `${sel.title}: ${k[0].toUpperCase()} ${e.target.value} m`)} /></label>)}
+          </div>
+          <div className="work-look">
+            <h4>How it looks</h4>
+            {looks[sel.id]?.model ? <p className="faint"><strong>{looks[sel.id].model!.title}</strong>{looks[sel.id].model!.credit ? ` · ${[looks[sel.id].model!.credit!.author?.replace(/\s*\(https?:[^)]*\)/, ""), looks[sel.id].model!.credit!.license?.replace(/\s*\(https?:[^)]*\)/, "")].filter(Boolean).join(" · ")}` : ""}. Stretched to the real size above; checks use the box.</p>
+              : looks[sel.id]?.photo ? <><img className="photo-thumb" src={looks[sel.id].photo!.thumbUrl} alt={`Front photo of ${sel.title}`} /><p className="faint">On the box’s front face, cropped to fit.</p></>
+              : <p className="faint">A plain box. Add a front photo or a .glb model, or drop one onto the view.</p>}
+            <div className="row">
+              <label className="file-button">Photo<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(e) => { const f = e.target.files?.[0]; if (f) onLookFile?.(sel.id, f); e.target.value = ""; }} /></label>
+              <label className="file-button">3D model (.glb)<input type="file" accept=".glb,model/gltf-binary" onChange={(e) => { const f = e.target.files?.[0]; if (f) onLookFile?.(sel.id, f); e.target.value = ""; }} /></label>
+              {(looks[sel.id]?.model || looks[sel.id]?.photo) && <button type="button" className="text-button" onClick={() => onLookRemove?.(sel.id)}>Back to box</button>}
+            </div>
+            {lookMsg && <p className="faint">{lookMsg}</p>}
           </div>
           <label>Viewing room (m)<input type="number" min={0} step={0.05} value={sel.clearanceM} onChange={(e) => g.updateWork(sel.id, { clearanceM: Math.max(0, Number(e.target.value)) }, `${sel.title}: viewing room ${e.target.value} m`)} /></label>
           <label className="check"><input type="checkbox" checked={sel.required} onChange={(e) => g.updateWork(sel.id, { required: e.target.checked }, `${sel.title}: ${e.target.checked ? "must be in the show" : "optional"}`)} /> Must be in the show</label>
@@ -175,18 +201,47 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel }:
   );
 }
 
+/**
+ * Place works that have no position in this space yet, like the single-work studio does on open: everything on a
+ * first visit, later only the newly added works (placed works stay put). Works that don't fit stay "not placed"
+ * and are reported — never shrunk or dropped. Each attempt runs once per space and set of unplaced works, so undoing
+ * an automatic placement doesn't trigger it again.
+ */
+export function useAutoPlace(g: GroupPlanner, ann: SpatialAnnotation | null, spaceId: string, enabled: boolean) {
+  const tried = useRef(new Set<string>());
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled || !ann) return;
+    const unplaced = g.works.filter((w) => !w.pose);
+    if (!unplaced.length) return;
+    const key = `${spaceId}|${unplaced.map((w) => `${w.id}:${w.widthM}x${w.depthM}:${w.clearanceM}`).join(",")}`;
+    if (tried.current.has(key)) return;
+    tried.current.add(key);
+    const first = unplaced.length === g.works.length;
+    // Placed works are treated as locked for this run so nothing the user arranged moves.
+    const works = g.works.map((w) => (w.pose ? { ...w, locked: true } : w));
+    const [plan] = suggestGroupPlans(ann, works, { order: g.orderForPlanning, priorities: ["room"], restarts: first ? 14 : 8 });
+    if (!plan) return;
+    const placed = Object.fromEntries(unplaced.filter((w) => plan.poses[w.id]).map((w) => [w.id, plan.poses[w.id]]));
+    const missing = unplaced.filter((w) => !plan.poses[w.id]).map((w) => w.title);
+    if (Object.keys(placed).length) g.setPoses(placed, first ? "Placed the works automatically (most room)" : `Placed ${Object.keys(placed).map((id) => g.works.find((w) => w.id === id)?.title).join(", ")} automatically`);
+    setNote(missing.length ? `No room found for ${missing.join(", ")} with ${missing.length > 1 ? "their" : "its"} viewing room; ${missing.length > 1 ? "they stay" : "it stays"} unplaced.` : first ? "Works placed automatically with the most room around each. Adjust, lock or ask for other layouts." : null);
+  }, [enabled, ann, spaceId, g.works]); // eslint-disable-line react-hooks/exhaustive-deps
+  return note;
+}
+
 // ---------- right panel ----------
 
 export function useGroupEvaluation(ann: SpatialAnnotation | null, g: GroupPlanner) {
   return useMemo(() => {
     if (!ann) return null;
     const poses = Object.fromEntries(g.works.map((w) => [w.id, w.pose]));
-    return evaluateGroup(ann, g.works, poses, g.doc.order);
-  }, [ann, g.works, g.doc.order]);
+    return evaluateGroup(ann, g.works, poses, g.doc.orderSet ? g.doc.order : undefined);
+  }, [ann, g.works, g.doc.order, g.doc.orderSet]);
 }
 
-export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide }: {
-  g: GroupPlanner; ev: GroupEvaluation | null; ann: SpatialAnnotation | null; onHide: () => void;
+export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide, autoNote, onWalk, spaceUse }: {
+  g: GroupPlanner; ev: GroupEvaluation | null; ann: SpatialAnnotation | null; onHide: () => void; autoNote?: string | null; onWalk?: () => void; spaceUse?: string | null;
   otherSpaces: { id: string; name: string; ann: SpatialAnnotation | null }[]; onSelect: (id: string) => void;
 }) {
   const [plans, setPlans] = useState<{ version: number; list: GroupPlan[] } | null>(null);
@@ -198,7 +253,7 @@ export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide }: 
     if (!ann) return;
     setBusy(true);
     setTimeout(() => { // let the busy state paint before the search
-      try { setPlans({ version: g.version, list: suggestGroupPlans(ann, g.works, { order: g.doc.order }) }); setInUse(null); } finally { setBusy(false); }
+      try { setPlans({ version: g.version, list: suggestGroupPlans(ann, g.works, { order: g.orderForPlanning }) }); setInUse(null); } finally { setBusy(false); }
     }, 30);
   };
   const stale = plans && plans.version !== g.version;
@@ -208,52 +263,59 @@ export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide }: 
     setElsewhere((m) => ({ ...m, [o.id]: "Checking…" }));
     setTimeout(() => {
       const fresh = g.doc.works.map((w) => ({ ...w, pose: null, locked: false }));
-      const [p] = suggestGroupPlans(o.ann!, fresh, { order: g.doc.order, priorities: ["room"], restarts: 10 });
+      const [p] = suggestGroupPlans(o.ann!, fresh, { order: g.orderForPlanning, priorities: ["room"], restarts: 10 });
       setElsewhere((m) => ({ ...m, [o.id]: p ? `${p.metrics.requiredPlaced}/${p.metrics.requiredTotal} required works fit${p.metrics.placed > p.metrics.requiredPlaced ? `, ${p.metrics.placed - p.metrics.requiredPlaced} optional` : ""}${p.evaluation.ok ? "" : " · has issues"} (draft floor plan)` : "No layout found" }));
     }, 30);
   };
   const artists = [...new Set(g.doc.works.map((w) => w.artist))];
+  const occ = useOccupancy(ann, g.works.filter((w) => w.pose).map((w) => ({ id: w.id, title: w.title, widthM: w.widthM, depthM: w.depthM, clearanceM: w.clearanceM, pose: w.pose! })));
+  // What visitors follow: the user's order, or the route's suggested order (then any unplaced works).
+  const shownOrder = g.doc.orderSet ? g.doc.order : [...(ev?.route.order ?? []), ...g.doc.order.filter((id) => !(ev?.route.order ?? []).includes(id))];
   const cls = !ev ? "unknown" : ev.ok ? "unknown" : "conflict";
   return (
     <>
       <div className="panel-head">
         <div>
-          <div className={`verdict ${cls}`}><span aria-hidden>{!ev ? "?" : ev.ok ? "?" : "✕"}</span>{!ev ? "No floor plan to check" : ev.ok ? "Looks like the show fits" : `${ev.conflicts.length} issue${ev.conflicts.length > 1 ? "s" : ""} to resolve`}</div>
-          <div className="faint">Group show · {g.works.filter((w) => w.pose).length}/{g.works.length} works placed · draft floor plan, review pending</div>
+          <h2>Layout</h2>
+          <div className={`verdict ${cls}`} role="status">{!ev ? "Geometry unavailable" : ev.ok ? "No placement conflicts" : `${ev.conflicts.length} issue${ev.conflicts.length > 1 ? "s" : ""} to resolve`}</div>
+          <div className="faint">{g.works.filter((w) => w.pose).length}/{g.works.length} placed · Review pending</div>
         </div>
         <button type="button" className="panel-hide" aria-label="Hide result panel" onClick={onHide}>→</button>
       </div>
       <div className="panel-body">
         <div className="card">
+          {autoNote?.startsWith("No room found") && <p className="faint auto-note" role="status">{autoNote}</p>}
           {ev && ev.conflicts.length > 0 && <ul className="issue-list">{ev.conflicts.map((c) => <li key={c}>{c}</li>)}</ul>}
-          {ev?.ok && <p className="faint">Every required work has its viewing room and a reachable viewing spot. Works may share viewing space; no work sits inside another work’s viewing room.</p>}
-          <h3 style={{ marginTop: 12 }}>Each artist</h3>
+          <p className="faint review-note">Draft plan · unit match and geometry need review.</p>
+          <details className="quiet-options"><summary>By artist</summary>
           <table className="kv"><tbody>
             {artists.map((a) => {
               const mine = g.works.filter((w) => w.artist === a);
               const okCount = mine.filter((w) => { const c = ev?.works.find((x) => x.workId === w.id); return c?.placed && c.valid && c.meetsClearance && c.reachable !== false; }).length;
               return <tr key={a}><td>{a}</td><td>{okCount}/{mine.length} works placed with their viewing room{mine.some((w) => w.required && !w.pose) ? " · a required work is not placed" : ""}</td></tr>;
             })}
-          </tbody></table>
+          </tbody></table></details>
         </div>
         <div className="card">
-          <h3>Viewing route</h3>
-          {ev?.route.note ? <p className="faint">{ev.route.note}</p> : ev?.route.lengthM != null ? <p className="faint">Entrance → {ev.route.order.map(name).join(" → ")} → exit · about {Math.round(ev.route.lengthM)} m of walking{ev.route.unreachable.length ? ` · can’t reach ${ev.route.unreachable.map(name).join(", ")}` : ""}. A walkable preview only; crowding and safety codes are not checked.</p> : <p className="faint">Place works to see a route.</p>}
+          <div className="row route-head"><h3>Route</h3>{ev?.route.lengthM != null && onWalk && <button type="button" className="route-preview" onClick={onWalk}>Walk route<span aria-hidden="true">→</span></button>}</div>
+          {ev?.route.note ? <p className="faint" role="status">{ev.route.note}</p> : ev?.route.lengthM != null ? <p className="faint">{Math.round(ev.route.lengthM)} m · {g.doc.orderSet ? "Custom order" : "Suggested order"}{ev.route.unreachable.length ? ` · Can’t reach ${ev.route.unreachable.map(name).join(", ")}` : ""}</p> : <p className="faint">Place artworks to preview a route.</p>}
+          <p className="faint route-caveat">Preview only · safety and accessibility not checked.</p>
+          {g.doc.orderSet && <button type="button" className="text-button order-reset" onClick={g.useSuggestedOrder}>Reset order</button>}
           <ol className="order-list">
-            {g.doc.order.map((id, i) => (
+            {shownOrder.map((id, i) => (
               <li key={id}>
                 <button type="button" className="text-button" onClick={() => onSelect(id)}>{i + 1}. {name(id)}</button>
                 <span>
-                  <button type="button" aria-label={`Earlier: ${name(id)}`} disabled={i === 0} onClick={() => { const o = [...g.doc.order]; [o[i - 1], o[i]] = [o[i], o[i - 1]]; g.setOrder(o); }}>↑</button>
-                  <button type="button" aria-label={`Later: ${name(id)}`} disabled={i === g.doc.order.length - 1} onClick={() => { const o = [...g.doc.order]; [o[i + 1], o[i]] = [o[i], o[i + 1]]; g.setOrder(o); }}>↓</button>
+                  <button type="button" aria-label={`Earlier: ${name(id)}`} disabled={i === 0} onClick={() => { const o = [...shownOrder]; [o[i - 1], o[i]] = [o[i], o[i - 1]]; g.setOrder(o); }}>↑</button>
+                  <button type="button" aria-label={`Later: ${name(id)}`} disabled={i === shownOrder.length - 1} onClick={() => { const o = [...shownOrder]; [o[i + 1], o[i]] = [o[i], o[i + 1]]; g.setOrder(o); }}>↓</button>
                 </span>
               </li>
             ))}
           </ol>
         </div>
-        <div className="card">
-          <div className="row"><h3>Suggested layouts</h3><button type="button" className="primary" disabled={!ann || busy} onClick={suggest}>{busy ? "Searching…" : plans ? "Suggest again" : "Suggest layouts"}</button></div>
-          <p className="faint">Layouts found for your conditions, not a guaranteed optimum. Locked works stay where they are; nothing is resized or removed.</p>
+        <details className="panel-disclosure"><summary>Layout options</summary><div className="card">
+          <div className="row"><button type="button" className="primary" disabled={!ann || busy} onClick={suggest}>{busy ? "Searching…" : plans ? "Suggest again" : "Suggest layouts"}</button></div>
+          <p className="faint">Tested suggestions. Locked artworks stay put; real sizes are preserved.</p>
           {inUse && !plans && <p className="faint">Using “{inUse}”. Undo returns to the previous layout; suggest again to compare.</p>}
           {stale && <p className="warn">The show changed since these were suggested. Suggest again before choosing.</p>}
           {plans?.list.length === 0 && <p className="warn">No layout found.</p>}
@@ -266,12 +328,11 @@ export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide }: 
             </div>
           ))}
           {otherSpaces.length > 0 && <>
-            <h3 style={{ marginTop: 10 }}>The same show elsewhere</h3>
+            <h3 style={{ marginTop: 10 }}>Other spaces</h3>
             {otherSpaces.map((o) => <div key={o.id} className="row other-space"><span>{o.name}</span>{elsewhere[o.id] ? <span className="faint">{elsewhere[o.id]}</span> : <button type="button" className="text-button" onClick={() => checkOther(o)}>Check fit</button>}</div>)}
           </>}
-        </div>
-        <div className="card">
-          <h3>Budget</h3>
+        </div></details>
+        <details className="panel-disclosure"><summary>Budget<span className="disclosure-status">{budget.status === "over_quoted" ? "Over budget" : budget.status === "unknown" ? "Needs review" : budget.status === "no_budget" ? "Not set" : "Quoted costs within budget"}</span></summary><div className="card">
           <label>Total budget ({g.doc.currency})<input type="number" min={0} step={100} value={g.doc.budget ?? ""} placeholder="Not set" onChange={(e) => g.setBudget(e.target.value === "" ? null : Number(e.target.value))} /></label>
           <div className={`budget-line ${budget.status}`}><strong>{budget.quoted.toLocaleString()} {budget.currency}</strong> quoted{budget.estimated ? <> · {budget.estimated.toLocaleString()} estimated</> : null}{budget.unknown.length ? <> · {budget.unknown.length} unknown</> : null}</div>
           <p className="faint">{budget.note} Unknown costs are not counted as zero. Moving works doesn’t change these costs; the listing’s asking rent is not a short-term price.</p>
@@ -286,8 +347,9 @@ export function GroupReviewPanel({ g, ev, ann, otherSpaces, onSelect, onHide }: 
               </li>
             ))}
           </ul>
-          <button type="button" className="text-button" onClick={() => { const label = window.prompt("Cost item (e.g. Transport: Tide, wall rental)"); if (label?.trim()) g.setCosts([...g.doc.costs, { id: newId("c"), label: label.trim(), workId: null, amount: null, currency: g.doc.currency, status: "unknown" }]); }}>Add a cost</button>
-        </div>
+          <button type="button" className="text-button" onClick={() => { const label = window.prompt("Cost item (e.g. Transport: Work 2, wall rental)"); if (label?.trim()) g.setCosts([...g.doc.costs, { id: newId("c"), label: label.trim(), workId: null, amount: null, currency: g.doc.currency, status: "unknown" }]); }}>Add a cost</button>
+        </div></details>
+        {occ && <details className="panel-disclosure visitor-details"><summary>Visitor estimate<span className="disclosure-status">Unverified</span></summary><OccupancyCard est={occ} spaceUse={spaceUse} /></details>}
       </div>
     </>
   );
@@ -327,12 +389,12 @@ export function applyGroupOps(doc: GroupDoc, ops: GroupOp[], ctx: { spaceId: str
         break;
       }
       case "set_order":
-        d = { ...d, order: [...o.workIds, ...d.order.filter((x) => !o.workIds.includes(x))] };
+        d = { ...d, order: [...o.workIds, ...d.order.filter((x) => !o.workIds.includes(x))], orderSet: true };
         changes.push(`Viewing order: ${d.order.map(title).join(" → ")}`);
         break;
       case "rearrange": {
         const works = worksFor(d, ctx.spaceId);
-        const [plan] = suggestGroupPlans(ctx.ann, works, { order: d.order, priorities: [o.priority], restarts: 14 });
+        const [plan] = suggestGroupPlans(ctx.ann, works, { order: d.orderSet ? d.order : undefined, priorities: [o.priority], restarts: 14 });
         if (!plan) return { error: "No layout was found." };
         if (plan.metrics.requiredPlaced < plan.metrics.requiredTotal) return { error: `No layout fits every required work (couldn't place ${plan.metrics.notPlaced.map(title).join(", ")}). Nothing was changed.` };
         const s = sp();
@@ -375,6 +437,7 @@ export function applyGroupOps(doc: GroupDoc, ops: GroupOp[], ctx: { spaceId: str
 
 export function GroupAiBar({ g, spaceId, ann, aiReady, viewRight, onSelect }: { g: GroupPlanner; spaceId: string; ann: SpatialAnnotation | null; aiReady: boolean | null; viewRight: () => Vec2 | null; onSelect: (id: string) => void }) {
   const [text, setText] = useState("");
+  const [expanded, setExpanded] = useState(true);
   const [log, setLog] = useState<{ request: string; result: string }[]>([]);
   const [status, setStatus] = useState<{ kind: "idle" | "busy" | "ask" | "bad"; text: string }>({ kind: "idle", text: "" });
   const live = useRef({ spaceId, version: g.version });
@@ -384,6 +447,7 @@ export function GroupAiBar({ g, spaceId, ann, aiReady, viewRight, onSelect }: { 
   const send = async (message: string) => {
     const m = message.trim();
     if (!m || status.kind === "busy" || !ann) return;
+    setExpanded(true);
     setText("");
     setStatus({ kind: "busy", text: m });
     const base = { spaceId, version: g.version };
@@ -410,38 +474,44 @@ export function GroupAiBar({ g, spaceId, ann, aiReady, viewRight, onSelect }: { 
       setStatus({ kind: "bad", text: (e as Error).message });
     }
   };
-  const examples = ["Lock Your work and rearrange the rest", "Show Your work first, then Tide", "Give every work more room"];
+  const examples = ["Lock Work 1 and rearrange the rest", "Show Work 2 first, then Work 1", "Give every work more room"];
   return (
     <section className="dock" aria-label="Plan the group show with AI">
       <div className="dock-head">
-        <strong>Plan with AI</strong>
-        {aiReady === false ? <span className="dock-conn off">AI not connected — panels still work</span> : <span className={"dock-dot" + (aiReady ? " on" : "")} role="img" aria-label={aiReady ? "AI connected" : "Checking AI connection"} />}
-        <span className="faint dock-ctx">Each request is one step you can undo.</span>
+        <strong>Edit with AI</strong>
+        {aiReady === false ? <span className="dock-conn off">AI unavailable</span> : <span className={"dock-dot" + (aiReady ? " on" : "")} role="img" aria-label={aiReady ? "AI connected" : "Checking AI connection"} />}
         <div className="edit-history-buttons">
           <button type="button" onClick={g.undo} disabled={!g.canUndo || status.kind === "busy"}>Undo</button>
           <button type="button" onClick={g.redo} disabled={!g.canRedo || status.kind === "busy"}>Redo</button>
+          <button type="button" aria-expanded={expanded} aria-controls="group-compose" aria-label={expanded ? "Collapse AI editor" : "Expand AI editor"} onClick={() => setExpanded((v) => !v)}>{expanded ? "Hide" : "Open"}</button>
         </div>
       </div>
+      {(status.kind === "ask" || status.kind === "bad") && <div className={"dock-status" + (status.kind === "bad" ? " bad" : "")} role="status"><strong>{status.kind === "ask" ? "Needs your input" : "Not applied"}</strong> — {status.text}</div>}
+      {status.kind === "busy" && <p className="dock-status" role="status">Working…</p>}
+      {status.kind === "idle" && log.length > 0 && <p className="dock-feedback" role="status">{log[log.length - 1].result}</p>}
+      <div id="group-compose" className="dock-compose" hidden={!expanded}>
+      <form className="edit-bar-input" onSubmit={(e) => { e.preventDefault(); void send(text); }}>
+        <label htmlFor="group-request" className="sr-only">Describe the change</label>
+        <input id="group-request" value={text} onChange={(e) => setText(e.target.value)} disabled={!aiReady || !ann} autoComplete="off"
+          placeholder={aiReady === false ? "AI is not available — use the panels" : "Describe a change to your artworks…"} />
+        {status.kind === "busy" ? <button type="button" disabled>Working…</button> : <button type="submit" className="primary" disabled={!aiReady || !text.trim()}>Apply<span aria-hidden="true">↵</span></button>}
+      </form>
+      <details className="dock-options"><summary>Examples &amp; history</summary>
+      <div className="edit-examples">{examples.map((ex) => <button key={ex} type="button" className="text-button" disabled={!aiReady || status.kind === "busy"} onClick={() => void send(ex)}>{ex}</button>)}</div>
       {(log.length > 0 || status.kind === "busy") && (
         <ol className="dock-log" ref={logRef} aria-live="polite">
           {log.map((x, i) => <li key={i}><span className="req">{x.request}</span><span className="res">{x.result}</span></li>)}
           {status.kind === "busy" && <li><span className="req">{status.text}</span><span className="res"><span className="spinner" /> Working…</span></li>}
         </ol>
       )}
-      {(status.kind === "ask" || status.kind === "bad") && <div className={"dock-status" + (status.kind === "bad" ? " bad" : "")} role="status"><strong>{status.kind === "ask" ? "Needs your input" : "Not applied"}</strong> — {status.text}</div>}
-      <form className="edit-bar-input" onSubmit={(e) => { e.preventDefault(); void send(text); }}>
-        <label htmlFor="group-request" className="sr-only">Describe the change</label>
-        <input id="group-request" value={text} onChange={(e) => setText(e.target.value)} disabled={!aiReady || !ann} autoComplete="off"
-          placeholder={aiReady === false ? "AI is not available — use the panels" : "e.g. keep Minji's work where it is and rearrange the rest"} />
-        {status.kind === "busy" ? <button type="button" disabled>Working…</button> : <button type="submit" className="primary" disabled={!aiReady || !text.trim()}>Apply<span aria-hidden="true">↵</span></button>}
-      </form>
-      <div className="edit-examples">{examples.map((ex) => <button key={ex} type="button" className="text-button" disabled={!aiReady || status.kind === "busy"} onClick={() => void send(ex)}>{ex}</button>)}</div>
+      </details></div>
     </section>
   );
 }
 
 /** Shapes for the renderers. */
-export function groupScene(g: GroupPlanner, ev: GroupEvaluation | null, selected: string | null) {
+export type WorkLook = { model?: ArtworkModel; photo?: ArtworkPhoto };
+export function groupScene(g: GroupPlanner, ev: GroupEvaluation | null, selected: string | null, looks: Record<string, WorkLook> = {}) {
   const orderIdx = (id: string) => (ev?.route.order.indexOf(id) ?? -1);
   return {
     works: g.works.filter((w) => w.pose).map((w) => {
@@ -450,6 +520,7 @@ export function groupScene(g: GroupPlanner, ev: GroupEvaluation | null, selected
         id: w.id, corners: workBody(w, w.pose!), heightM: w.heightM, color: colorOfArtist(g.doc, w.artist), selected: w.id === selected,
         issue: !!c && (!c.valid || !c.meetsClearance || c.reachable === false), locked: w.locked,
         label: `${orderIdx(w.id) >= 0 ? `${orderIdx(w.id) + 1}. ` : ""}${w.title}`, clearanceM: w.clearanceM, viewPoint: c?.viewPoint ?? null, pose: w.pose!, widthM: w.widthM, depthM: w.depthM,
+        look: looks[w.id]?.model ? { model: { id: looks[w.id].model!.id, parts: looks[w.id].model!.parts } } : looks[w.id]?.photo ? { photo: looks[w.id].photo! } : null,
       };
     }),
     route: ev?.route.path ?? [],

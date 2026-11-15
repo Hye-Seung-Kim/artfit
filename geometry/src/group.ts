@@ -248,16 +248,45 @@ export function computeRoute(ann: SpatialAnnotation, works: GroupWork[], poses: 
   if (entCell == null) {
     return { route: { entrance: ent, order: ids, path: [], lengthM: null, unreachable: [], note: ent ? "The entrance is not connected to open floor." : "No entrance is traced in this space, so a route can't start." }, viewPoints };
   }
-  // Visiting order: the user's order first, then the rest by nearest standing spot.
+  // Visiting order: the user's order first (if they set one); the rest in the order with the shortest WALK
+  // (grid paths around walls and works, back to the entrance), exact for up to 7 open works.
   const seq = (order ?? []).filter((id) => ids.includes(id));
-  const rest = ids.filter((id) => !seq.includes(id));
-  let from = centerOf(g, entCell % g.nx, Math.floor(entCell / g.nx));
-  while (rest.length) {
-    rest.sort((a, b) => (viewPoints[a] ? dist(from, viewPoints[a]!) : 1e9) - (viewPoints[b] ? dist(from, viewPoints[b]!) : 1e9));
-    const nxt = rest.shift()!;
-    seq.push(nxt);
-    if (viewPoints[nxt]) from = viewPoints[nxt]!;
+  const rest = ids.filter((id) => !seq.includes(id) && viewCells[id] != null);
+  const legCache = new Map<string, { len: number; path: number[] | null }>();
+  const leg = (a: number, b: number) => {
+    const k = a < b ? `${a}-${b}` : `${b}-${a}`;
+    let v = legCache.get(k);
+    if (!v) {
+      const p = astar(g, a, b);
+      let L = 0;
+      if (p) for (let i = 1; i < p.length; i++) L += dist(centerOf(g, p[i - 1] % g.nx, Math.floor(p[i - 1] / g.nx)), centerOf(g, p[i] % g.nx, Math.floor(p[i] / g.nx)));
+      v = { len: p ? L : Infinity, path: p };
+      legCache.set(k, v);
+    }
+    return v.len;
+  };
+  if (rest.length) {
+    const start = seq.length && viewCells[seq[seq.length - 1]] != null ? viewCells[seq[seq.length - 1]]! : entCell;
+    const cost = (perm: string[]) => {
+      let c = 0, cur = start;
+      for (const id of perm) { c += leg(cur, viewCells[id]!); cur = viewCells[id]!; }
+      return c + leg(cur, entCell);
+    };
+    let best = [...rest];
+    if (rest.length <= 7) {
+      let bestC = Infinity;
+      const permute = (arr: string[], k: number) => {
+        if (k === arr.length) { const c = cost(arr); if (c < bestC) { bestC = c; best = [...arr]; } return; }
+        for (let i = k; i < arr.length; i++) { [arr[k], arr[i]] = [arr[i], arr[k]]; permute(arr, k + 1); [arr[k], arr[i]] = [arr[i], arr[k]]; }
+      };
+      permute([...rest], 0);
+    } else {
+      best = []; const left = [...rest]; let cur = start;
+      while (left.length) { left.sort((a, b) => leg(cur, viewCells[a]!) - leg(cur, viewCells[b]!)); const n = left.shift()!; best.push(n); cur = viewCells[n]!; }
+    }
+    seq.push(...best);
   }
+  seq.push(...ids.filter((id) => !seq.includes(id))); // works without a standing spot (reported unreachable)
   const unreachable: string[] = [];
   const visit: string[] = [];
   // Each leg (entrance → work, work → work, last work → exit) is straightened on its own.

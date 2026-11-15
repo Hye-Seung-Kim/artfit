@@ -29,11 +29,13 @@ export function AiEditBar({ editor, aiReady, ctxFor, viewLabel, renderers, alert
 }) {
   const [text, setText] = useState("");
   const [help, setHelp] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const logRef = useRef<HTMLOListElement>(null);
   const busy = editor.ai.kind === "interpreting";
   const send = (msg: string) => {
     const m = msg.trim();
     if (!m || busy) return;
+    setExpanded(true);
     void editor.askClaude(m, ctxFor, viewLabel);
     setText("");
   };
@@ -47,24 +49,18 @@ export function AiEditBar({ editor, aiReady, ctxFor, viewLabel, renderers, alert
   return (
     <section className="dock" aria-label="Edit artwork with AI">
       <div className="dock-head">
-        <strong>Edit artwork</strong>
+        <strong>Edit with AI</strong>
         {aiReady === false
-          ? <span className="dock-conn off">AI not connected — manual controls still work</span>
+          ? <span className="dock-conn off">AI unavailable</span>
           : <span className={"dock-dot" + (aiReady ? " on" : "")} role="img" aria-label={aiReady ? "AI connected" : "Checking AI connection"} title={aiReady ? "AI connected. The AI reads your request; ArtFit applies and checks it." : "Checking AI connection…"} />}
         <button type="button" className="dock-help" aria-expanded={help} aria-controls="dock-help-text" aria-label="How directions work" onClick={() => setHelp((h) => !h)}>i</button>
         <div className="edit-history-buttons">
           <button type="button" onClick={editor.undo} disabled={!editor.history.past.length || busy}>Undo</button>
           <button type="button" onClick={editor.redo} disabled={!editor.history.future.length || busy}>Redo</button>
-          <button type="button" onClick={editor.reset} disabled={busy}>Reset</button>
+          <button type="button" aria-expanded={expanded} aria-controls="single-compose" aria-label={expanded ? "Collapse AI editor" : "Expand AI editor"} onClick={() => setExpanded((v) => !v)}>{expanded ? "Hide" : "Open"}</button>
         </div>
       </div>
       {help && <p id="dock-help-text" className="dock-helptext">Left and right follow the {viewLabel}. Turning right is clockwise, seen from above. Units: cm, m or ft.</p>}
-      {(log.length > 0 || busy) && (
-        <ol className="dock-log" ref={logRef} aria-live="polite">
-          {log.map((x, i) => <li key={i}><span className="req">{x.request}</span><span className="res">{/^not applied/i.test(x.result) ? "Not applied." : shortChange(x.result)}</span></li>)}
-          {busy && ai.kind === "interpreting" && <li><span className="req">{ai.message}</span><span className="res"><span className="spinner" /> Working…</span></li>}
-        </ol>
-      )}
       {(ai.kind === "clarify" || ai.kind === "failed" || ai.kind === "discarded" || ai.kind === "local") && (
         <div className={"dock-status" + (ai.kind === "local" ? "" : ai.kind === "clarify" ? " ask" : " bad")} role="status">
           {ai.kind === "clarify" && <><strong>{ai.needsInfo ? "Needs your input" : "Not supported"}</strong> — {ai.question}</>}
@@ -79,6 +75,9 @@ export function AiEditBar({ editor, aiReady, ctxFor, viewLabel, renderers, alert
           {renderIssues.map((a) => <li key={a} className="conflict">Not shown in {a}</li>)}
         </ul>
       )}
+      {busy && <p className="dock-status" role="status">Working…</p>}
+      {!busy && log.length > 0 && ai.kind !== "failed" && ai.kind !== "clarify" && ai.kind !== "discarded" && <p className="dock-feedback" role="status">{shortChange(log[log.length - 1].result)}</p>}
+      <div id="single-compose" className="dock-compose" hidden={!expanded}>
       <form className="edit-bar-input" onSubmit={(e) => { e.preventDefault(); send(text); }}>
         <label htmlFor="edit-request" className="sr-only">Describe the change</label>
         <input id="edit-request" value={text} onChange={(e) => setText(e.target.value)} disabled={!aiReady}
@@ -87,9 +86,18 @@ export function AiEditBar({ editor, aiReady, ctxFor, viewLabel, renderers, alert
           ? <button type="button" onClick={editor.cancelClaude}>Cancel</button>
           : <button type="submit" className="primary" disabled={!aiReady || !text.trim()}>Apply<span aria-hidden="true">↵</span></button>}
       </form>
+      <details className="dock-options"><summary>Examples &amp; history</summary>
       <div className="edit-examples">
         {EXAMPLES.map((ex) => <button key={ex} type="button" className="text-button" disabled={!aiReady || busy} onClick={() => send(ex)}>{ex}</button>)}
       </div>
+      {(log.length > 0 || busy) && (
+        <ol className="dock-log" ref={logRef} aria-live="polite">
+          {log.map((x, i) => <li key={i}><span className="req">{x.request}</span><span className="res">{/^not applied/i.test(x.result) ? "Not applied." : shortChange(x.result)}</span></li>)}
+          {busy && ai.kind === "interpreting" && <li><span className="req">{ai.message}</span><span className="res"><span className="spinner" /> Working…</span></li>}
+        </ol>
+      )}
+        <button type="button" className="text-button" onClick={editor.reset} disabled={busy}>Reset artwork</button>
+      </details></div>
     </section>
   );
 }

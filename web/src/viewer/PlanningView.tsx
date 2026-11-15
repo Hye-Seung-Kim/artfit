@@ -124,11 +124,52 @@ export interface ViewerProps {
   photo?: ArtworkPhoto | null;
   /** Group show: several works, the viewing route and standing spots (replaces the single-artwork overlay). */
   group?: {
-    works: { id: string; corners: Vec2[]; heightM: number; color: string; selected: boolean; issue: boolean; locked: boolean; label: string; clearanceM: number; viewPoint: Vec2 | null; pose: { x: number; z: number; rotDeg: number }; widthM: number; depthM: number }[];
+    works: { id: string; corners: Vec2[]; heightM: number; color: string; selected: boolean; issue: boolean; locked: boolean; label: string; clearanceM: number; viewPoint: Vec2 | null; pose: { x: number; z: number; rotDeg: number }; widthM: number; depthM: number;
+      look: { model?: { id: string; parts: ModelPart[] }; photo?: ArtworkPhoto } | null }[];
     route: Vec2[]; entrance: Vec2 | null; onSelect?: (id: string) => void;
+    /** Increment to play the walk-through once. */
+    walkRun?: number;
   } | null;
   /** Identifies the space; its camera view is saved and restored when switching spaces. */
   viewKey?: string;
+}
+
+/**
+ * Walk-through: a 1.7 m figure follows the route at an easy pace (shown 3× faster), stopping at each standing spot
+ * to face the work. It replays the computed path; it does not model crowds or speed.
+ */
+function Walker({ path, stops, run }: { path: Vec2[]; stops: { at: Vec2; look: Vec2 }[]; run: number }) {
+  const ref = useRef<THREE.Group>(null);
+  const fig = useMemo(() => buildHumanFigure(THREE, { color: 0x1f7a68 }), []);
+  const seg = useMemo(() => {
+    const cum = [0];
+    for (let k = 1; k < path.length; k++) cum.push(cum[k - 1] + Math.hypot(path[k].x - path[k - 1].x, path[k].z - path[k - 1].z));
+    // Arc length of each stop = the path vertex closest to its standing spot.
+    const st = stops.map((s) => { let bi = 0, bd = Infinity; path.forEach((p, i) => { const d = Math.hypot(p.x - s.at.x, p.z - s.at.z); if (d < bd) { bd = d; bi = i; } }); return { s: cum[bi], look: s.look }; }).sort((a, b) => a.s - b.s);
+    return { cum, total: cum[cum.length - 1] ?? 0, stops: st };
+  }, [path, stops]);
+  const st = useRef({ active: false, s: 0, pause: 0, next: 0 });
+  useEffect(() => { if (run > 0 && path.length > 1) st.current = { active: true, s: 0, pause: 0, next: 0 }; }, [run]); // eslint-disable-line react-hooks/exhaustive-deps
+  useFrame((_, dt) => {
+    const g = ref.current, v = st.current;
+    if (!g) return;
+    g.visible = v.active;
+    if (!v.active) return;
+    if (v.pause > 0) { v.pause -= dt; return; }
+    const reduce = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    v.s += dt * (reduce ? 12 : 4.2);
+    const stop = seg.stops[v.next];
+    let face: Vec2 | null = null;
+    if (stop && v.s >= stop.s) { v.s = stop.s; v.pause = reduce ? 0.6 : 1.4; v.next++; face = stop.look; }
+    if (v.s >= seg.total) { v.active = false; g.visible = false; return; }
+    let k = 1;
+    while (k < seg.cum.length - 1 && seg.cum[k] < v.s) k++;
+    const a = path[k - 1], b = path[k], L = seg.cum[k] - seg.cum[k - 1] || 1, t = Math.min(1, Math.max(0, (v.s - seg.cum[k - 1]) / L));
+    const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+    g.position.set(x, 0, z);
+    g.rotation.y = face ? Math.atan2(face.x - x, face.z - z) : Math.atan2(b.x - a.x, b.z - a.z);
+  });
+  return <group ref={ref} visible={false}><primitive object={fig} /></group>;
 }
 
 /** Group show layer: every work (colour = artist), the selected work's viewing room, standing spots and the route. */
@@ -145,8 +186,12 @@ function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
       {group.works.map((w) => (
         <group key={w.id} onClick={(e) => { e.stopPropagation(); group.onSelect?.(w.id); }}>
           {w.selected && <Outline poly={roundedRect(w.pose.x, w.pose.z, w.widthM, w.depthM, w.pose.rotDeg, w.clearanceM)} color={w.issue ? "#d93025" : "#2e7d4f"} dashed y={0.015} />}
-          <Extruded poly={w.corners} height={w.heightM} color={w.issue ? "#d93025" : w.color} opacity={w.issue ? 0.65 : w.selected ? 1 : 0.9}
-            edges={w.selected ? "#6bdcc5" : w.issue ? "#d93025" : "#9aa09a"} />
+          {w.look?.model
+            ? <><ModelArtwork corners={w.corners} heightM={w.heightM} y={0} model={{ id: w.look.model.id, parts: w.look.model.parts, override: null }} conflict={w.issue} />
+                <Outline poly={w.corners} color={w.selected ? "#6bdcc5" : "#111111"} dashed y={0.02} width={w.selected ? 2 : 1} /></>
+            : <Extruded poly={w.corners} height={w.heightM} color={w.issue ? "#d93025" : w.color} opacity={w.issue ? 0.65 : w.selected ? 1 : 0.9}
+                edges={w.selected ? "#6bdcc5" : w.issue ? "#d93025" : "#9aa09a"} />}
+          {!w.look?.model && w.look?.photo && !w.issue && <PhotoFace corners={w.corners} heightM={w.heightM} y={0} photo={w.look.photo} />}
           {w.viewPoint && <mesh position={[w.viewPoint.x, 0.02, w.viewPoint.z]} rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[0.12, 24]} /><meshBasicMaterial color="#1f7a68" /></mesh>}
           <Html position={[w.pose.x, w.heightM + 0.35, w.pose.z]} center>
             <span className={"scene-tag" + (w.selected ? " on" : "") + (w.issue ? " bad" : "")}>{w.label}{w.locked ? " · locked" : ""}</span>
@@ -154,6 +199,7 @@ function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
         </group>
       ))}
       {fig && figWork && <Human at={fig} yaw={Math.atan2(figWork.pose.x - fig.x, figWork.pose.z - fig.z)} />}
+      <Walker path={group.route} stops={group.works.filter((w) => w.viewPoint).map((w) => ({ at: w.viewPoint!, look: { x: w.pose.x, z: w.pose.z } }))} run={group.walkRun ?? 0} />
     </>
   );
 }

@@ -4,6 +4,8 @@
 
 ArtFit finds commercial spaces that are marketed for lease in a CoStar data-kit snapshot. It keeps three things separate: listing availability, physical vacancy, and furniture condition. It checks one floor-standing artwork and its walk-around clearance against geometry traced from Matterport scans. It also precomputes alternatives and produces a checklist of what still has to be verified.
 
+> Current user journey: [Exhibition Planning User Flow](docs/USER_FLOW.md) — multi-work onboarding, CoStar candidate search, group Workspace, and implementation limits.
+
 ## Run
 
 ```bash

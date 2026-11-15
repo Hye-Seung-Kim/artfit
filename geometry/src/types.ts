@@ -8,13 +8,19 @@ export type Vec2 = { x: number; z: number };
 export type Polygon = Vec2[]; // simple, implicitly closed, CCW after normalization
 export interface Artwork { widthM: number; depthM: number; heightM: number }
 
+/** One work in the exhibition (group show). Real size; clearanceM null = use the brief's preferred clearance. */
+export interface BriefWork { id: string; title: string; artist: string; widthM: number; depthM: number; heightM: number; clearanceM: number | null; required: boolean }
+
 export interface ExhibitionBrief {
   city: "Los Angeles" | "Houston"; // legacy key; UI says research market
   exhibitionStart: string;
   exhibitionEnd: string;
   budget: number | null;
   budgetCurrency: string;
+  /** The work used for search screening and the single-work studio: the largest footprint among `works`. */
   artwork: Artwork;
+  /** All works in the exhibition (1 = solo). Search never treats their combined area as a fit result. */
+  works?: BriefWork[];
   preferredClearanceM: number;
   minimumClearanceM: number | null; // null = NOT specified, never auto-zero
   spaceUsePreferences: string[];

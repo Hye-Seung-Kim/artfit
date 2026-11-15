@@ -20,12 +20,14 @@ export type CandidateCard = {
   isExecutiveSuite: boolean | null; monthsOnMarket: number | null; idleSignal: string; idleNote: string | null;
   lastRecordedTenantLeftAt: string | null; tenancyMatch: string; areaScreen: string; matterportModelCount: number;
   matterportLinkLevel: string; hasAnnotation: boolean; matchProposed: boolean; matchVerified: boolean; spatiallyVerified: boolean;
+  listedAreaM2: number | null; requiredAreaM2: number; ceilingHeightM: number | null;
+  heightContext: "listed_clears" | "listed_tight" | "listed_below_tallest" | "unknown";
   conditionLabels: Record<string, string>; certifiedFreshDate: string | null;
 };
 export type SearchResult = {
   requestId: string; brief: ExhibitionBrief; sourceLabel: string; snapshotRefDate: string; countUnit: string;
   inputAudit: { activeLeaseListings: number; nestedSpaces: number; exclusionReasons: Record<string, number>; unresolvedPropertyBucket: number; parseErrors: number; duplicateKeysRemoved: number };
-  funnel: Record<"N" | "M" | "M1" | "K" | "V", { count: number; label: string; reasons?: Record<string, number>; areaScreen?: Record<string, number>; useUnknownBucket?: number }>;
+  funnel: Record<"N" | "M" | "M1" | "K" | "V", { count: number; label: string; reasons?: Record<string, number>; areaScreen?: Record<string, number>; heightScreen?: Record<string, number>; tallestM?: number; useUnknownBucket?: number }>;
   conditionBuckets: { vacancyEvidence: Record<string, { qualifying: number; needsVerification: number; mismatch: number }>; furnitureEvidence: Record<string, { qualifying: number; needsVerification: number; mismatch: number }>; note: string };
   candidates: CandidateCard[];
 };
@@ -41,6 +43,7 @@ export type Plan = any;
 
 export const api = {
   health: () => call<any>("GET", "/api/health"),
+  markets: () => call<{ city: string; listings: number; withTour: number; traced: number; snapshotRefDate: string }[]>("GET", "/api/markets"),
   search: (brief: unknown, requestId: string) => call<SearchResult>("POST", "/api/spaces/search", { brief, requestId }),
   inspect: (id: string) => call<Inspect>("GET", `/api/spaces/${encodeURIComponent(id)}`),
   geometry: (id: string) => call<{ annotation: SpatialAnnotation; ledger: any }>("GET", `/api/spaces/${encodeURIComponent(id)}/geometry`),

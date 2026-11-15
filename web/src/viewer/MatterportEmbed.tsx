@@ -10,16 +10,20 @@ import { ARTWORK_COMPONENT, artworkComponentFactory, type ArtworkSceneSpec } fro
 const SDK_KEY = import.meta.env.VITE_MATTERPORT_SDK_KEY as string | undefined;
 const PLAY_TIMEOUT_MS = 45_000;
 
-export type ScanOverlay = ArtworkSceneSpec & { center: Vec2; label: string; floor: Vec2[] };
+export type ScanOverlay = ArtworkSceneSpec & { center: Vec2; label: string; floor: Vec2[];
+  /** Group show walk-through: works in viewing order. */
+  tour?: { label: string; center: Vec2; heightM: number; corners: Vec2[] }[] };
 
 type Status = { kind: "loading"; step: string } | { kind: "playing" } | { kind: "error"; reason: string };
 
-export default function MatterportEmbed({ modelId, overlay, editVersion, onViewRight, onRenderState }: {
+export default function MatterportEmbed({ modelId, overlay, editVersion, onViewRight, onRenderState, walkRun }: {
   modelId: string; overlay?: ScanOverlay | null;
   /** ArtFit edit version the overlay represents; reported back once it is actually in the scene. */
   editVersion?: number;
   onViewRight?: (v: Vec2) => void;
   onRenderState?: (s: string) => void;
+  /** Increment to walk the group show in viewing order (moves between real scan viewpoints). */
+  walkRun?: number;
 }) {
   const onViewRightRef = useRef(onViewRight); onViewRightRef.current = onViewRight;
   const onRenderStateRef = useRef(onRenderState); onRenderStateRef.current = onRenderState;
@@ -103,7 +107,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   }, [modelId, attempt]);
 
   // Push every new pose into the live scene component (no reload).
-  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material, overlay.model?.id ?? null, overlay.model?.override ?? null, overlay.photo?.id ?? null, overlay.group ?? null]) : "none";
+  const specKey = overlay ? JSON.stringify([overlay.artwork, overlay.heightM, overlay.buffer, overlay.red.length, overlay.green.length, overlay.conflict, overlay.floorY, overlay.baseElevationM, overlay.colorHex, overlay.material, overlay.model?.id ?? null, overlay.model?.override ?? null, overlay.photo?.id ?? null, overlay.group ? JSON.stringify(overlay.group, (k, v) => (k === "parts" ? undefined : k === "photo" ? v?.id ?? null : k === "model" ? v?.id ?? null : v)) : null]) : "none";
   useEffect(() => {
     if (status.kind !== "playing") { onRenderStateRef.current?.(status.kind === "loading" ? `loading (${status.step})` : `unavailable: ${status.reason}`); return; }
     if (!compRef.current) { onRenderStateRef.current?.("scene object not ready"); return; }
@@ -115,6 +119,49 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [specKey, status.kind, editVersion]);
+
+  /** Move to the scan viewpoint that best shows a target: in the room, outside its clearance, nearest, facing it. */
+  const lookAt = async (mp: any, t: { center: Vec2; heightM: number; floorY: number; floor: Vec2[]; buffer: Vec2[] }) => {
+    const INSIDE = mp.Mode.Mode.INSIDE;
+    const inside = () => viewModeRef.current === INSIDE || viewModeRef.current === "mode.inside";
+    const dist = (s: (typeof sweeps)[number]) => Math.hypot(s.position.x - t.center.x, s.position.z - t.center.z);
+    const at = (s: (typeof sweeps)[number]) => ({ x: s.position.x, z: s.position.z });
+    const inRoom = sweeps.filter((s) => pointInPolygon(at(s), t.floor) >= 0);
+    const clear = inRoom.filter((s) => pointInPolygon(at(s), t.buffer) < 0);
+    const pool = clear.length ? clear : inRoom.length ? inRoom : sweeps;
+    const s = [...pool].sort((a, b) => dist(a) - dist(b))[0];
+    const dx = t.center.x - s.position.x, dz = t.center.z - s.position.z;
+    const rotation = { x: -(Math.atan2(s.position.y - t.floorY - t.heightM / 2, Math.hypot(dx, dz)) * 180) / Math.PI, y: (Math.atan2(-dx, -dz) * 180) / Math.PI };
+    if (!inside()) await mp.Mode.moveTo(INSIDE, { sweep: s.sid, rotation, transition: mp.Mode.TransitionType?.FLY });
+    try { await mp.Sweep.moveTo(s.sid, { rotation, transition: mp.Sweep.Transition.FLY, transitionTime: 1200 }); }
+    catch { await mp.Camera.setRotation?.(rotation, { speed: 2 })?.catch?.(() => {}); } // already standing there: just turn
+    return clear.length > 0;
+  };
+
+  // Walk-through: visit each work in viewing order from the real scan viewpoints.
+  const walking = useRef(0);
+  // A request made before this viewer existed is not replayed; one made while it is loading starts when ready.
+  const handledWalk = useRef(walkRun ?? 0);
+  const [walkNote, setWalkNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!walkRun || walkRun <= handledWalk.current) return;
+    const mp = sdkRef.current, o = overlayRef.current;
+    if (status.kind !== "playing" || !mp || !sweeps.length) { setWalkNote("The walk-through starts when the scan has loaded…"); return; }
+    handledWalk.current = walkRun;
+    if (!o?.tour?.length) { setWalkNote("No works placed to walk to."); return; }
+    const my = ++walking.current;
+    (async () => {
+      await new Promise((r) => setTimeout(r, 900)); // let Showcase finish activating the current viewpoint first
+      for (const [i, w] of o.tour!.entries()) {
+        if (walking.current !== my) return;
+        setWalkNote(`Walking the route: ${i + 1}/${o.tour!.length} · ${w.label}`);
+        try { await lookAt(mp, { center: w.center, heightM: w.heightM, floorY: o.floorY, floor: o.floor, buffer: w.corners }); } catch (e) { setWalkNote("Move failed: " + (e as Error).message); return; }
+        await new Promise((r) => setTimeout(r, 2200));
+      }
+      if (walking.current === my) setWalkNote("Walk-through finished. Scan viewpoints are where the camera was captured, so they only approximate the route.");
+    })();
+  }, [walkRun, status.kind, sweeps.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { walking.current++; }, []);
 
   const mode = (m: "dollhouse" | "floorplan" | "inside") => {
     const mp = sdkRef.current;
@@ -171,15 +218,16 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
         )}
       </div>
       <div className="legend scan-controls" style={{ alignItems: "center" }}>
-        {status.kind === "playing" && <span className="badge fit">● Artwork placed in scan · {sweeps.length} viewpoints</span>}
+        {status.kind === "playing" && (overlay ? <span className="scan-state" title={`${sweeps.length} scan viewpoints`}>● Artwork overlay</span> : <span className="scan-state">Scan only</span>)}
         {status.kind === "loading" && <span className="badge info">Loading…</span>}
         {status.kind === "error" && <span className="badge conflict">{status.reason}</span>}
-        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("inside")}>{overlay ? "View artwork from inside" : "Back inside"}</button>
-        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("dollhouse")}>Dollhouse</button>
+        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("inside")}>{"Inside"}</button>
+        <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("dollhouse")}>Overview</button>
         <button className="ghost" style={{ padding: "2px 8px" }} disabled={status.kind !== "playing"} onClick={() => mode("floorplan")}>Floor plan</button>
         {status.kind === "error" && <button className="ghost" style={{ padding: "2px 8px" }} onClick={() => setAttempt((a) => a + 1)}>Retry</button>}
         {note && <span className="faint">{note}</span>}
-        <span>{overlay ? overlay.label + " · " : ""}planning overlay; the scan still shows whatever was captured at scan time.</span>
+        {walkNote && <span className="faint walk-note">{walkNote}</span>}
+        <details className="scan-about"><summary>About this view</summary><p>{overlay ? "Artwork is a planning overlay. " : ""}The scan shows conditions at capture time; current vacancy and furnishings need confirmation.</p></details>
       </div>
     </div>
   );

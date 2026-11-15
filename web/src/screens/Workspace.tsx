@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   AS_SCANNED, DEFAULT_SCAN, FINISH_COLORS, FOUR_ROTATIONS, checkPose, displayM, evaluate, fmtM, passes, placementScope, resolveActiveObstacles, verticalCheck,
   type ApplyContext, type ExhibitionBrief, type SpatialAnnotation, type Vec2,
@@ -11,8 +11,10 @@ import { useWorkerScan } from "../workspace/useScan";
 import { buildChecklist } from "../workspace/checklist";
 import { useArtworkEditor } from "../workspace/useArtworkEditor";
 import { AiEditBar, ManualPlacementControls } from "../workspace/ArtworkEditBar";
-import { GroupAiBar, GroupReviewPanel, GroupWorksPanel, groupScene, useGroupEvaluation, useGroupPlanner, worksFor } from "../workspace/GroupStudio";
+import { GroupAiBar, GroupReviewPanel, GroupWorksPanel, groupScene, type WorkLook, useAutoPlace, useGroupEvaluation, useGroupPlanner, worksFor } from "../workspace/GroupStudio";
 import { workBody } from "@artfit/geometry";
+import { withWorks } from "./Brief";
+import { OccupancyCard, occupancyChecklistLine, useOccupancy } from "../workspace/Occupancy";
 import { importDimensions, isStretched, loadArtworkModel, loadArtworkPhoto, proportionalDims, type ArtworkModel, type ArtworkPhoto } from "../viewer/artworkModel";
 
 type SpaceData = { annotation: SpatialAnnotation | null; inspect: any; error?: string };
@@ -64,7 +66,7 @@ const VERDICT = {
   unknown: { cls: "unknown", icon: "?", text: "Can’t tell yet" },
 } as const;
 
-export default function Workspace({ spaceIds, brief, setBrief, onBack }: { spaceIds: string[]; brief: ExhibitionBrief; setBrief: (b: ExhibitionBrief) => void; onBack: () => void }) {
+export default function Workspace({ spaceIds, brief, setBrief, onBack }: { spaceIds: string[]; brief: ExhibitionBrief; setBrief: Dispatch<SetStateAction<ExhibitionBrief>>; onBack: () => void }) {
   const [active, setActive] = useState(spaceIds[0]);
   const [data, setData] = useState<Record<string, SpaceData>>({});
   const [view, setView] = useState<"plan" | "scan" | "split">("plan");
@@ -78,7 +80,8 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
   const [showEvidence, setShowEvidence] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const [mode, setMode] = useState<"single" | "group">("single");
+  // A brief with several works opens straight into the group show.
+  const [mode, setMode] = useState<"single" | "group">(() => ((brief.works?.length ?? 0) > 1 ? "group" : "single"));
   const isGroup = mode === "group";
   // User-supplied 3D model of the artwork (display only; checks keep using its outer box).
   const [model, setModel] = useState<ArtworkModel | null>(null);
@@ -88,18 +91,13 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
   // Front photo on the box face (interview: "my work actually in the space"). A photo and a 3D model are exclusive.
   const [photo, setPhoto] = useState<ArtworkPhoto | null>(null);
   const dragDepth = useRef(0);
-  // Floating UI over the 3D canvas (desktop only): frame the room in the uncovered region.
   const [wide, setWide] = useState(() => window.matchMedia("(min-width: 1101px)").matches);
-  const [dockH, setDockH] = useState(0);
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1101px)");
     const on = () => setWide(mq.matches);
     mq.addEventListener("change", on);
-    const dock = document.querySelector<HTMLElement>(".studio .dock");
-    const ro = dock ? new ResizeObserver(() => setDockH(dock.offsetHeight)) : null;
-    if (dock && ro) ro.observe(dock);
-    return () => { mq.removeEventListener("change", on); ro?.disconnect(); };
-  }, [mode]);
+    return () => mq.removeEventListener("change", on);
+  }, []);
   const latestEval = useRef("");
 
   useEffect(() => {
@@ -114,11 +112,26 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
 
   const sd = data[active];
   const ann = sd?.annotation ?? null;
+  // Tour-only: a listing with a linked 3D tour but no traced floor plan. Show the tour; never a placement result.
+  const tourOnly = !!sd?.inspect && !ann && (sd.inspect.candidate?.matterportModelIds?.length ?? 0) > 0;
+  const shownTourFor = useRef<string | null>(null);
+  useEffect(() => { if (tourOnly && shownTourFor.current !== active) { shownTourFor.current = active; setView("scan"); } }, [tourOnly, active]);
   // Group show mode: several artists' works in this space (separate document with its own undo/redo).
   const [groupSel, setGroupSel] = useState<string | null>(null);
-  const group = useGroupPlanner({ spaceIds, active, seed: { widthM: brief.artwork.widthM, depthM: brief.artwork.depthM, heightM: brief.artwork.heightM, clearanceM: brief.preferredClearanceM }, budget: brief.budget, currency: brief.budgetCurrency ?? "USD" });
+  const group = useGroupPlanner({ spaceIds, active, seed: { widthM: brief.artwork.widthM, depthM: brief.artwork.depthM, heightM: brief.artwork.heightM, clearanceM: brief.preferredClearanceM }, budget: brief.budget, currency: brief.budgetCurrency ?? "USD", works: brief.works });
+  // Works edited here flow back into the brief (Discover then asks for a new search; Brief shows the same list).
+  useEffect(() => {
+    if ((brief.works?.length ?? 0) < 2 && group.doc.works.length < 2) return; // solo: the single-work editor owns the size
+    const ws = group.doc.works.map((w) => ({ id: w.id, title: w.title, artist: w.artist, widthM: w.widthM, depthM: w.depthM, heightM: w.heightM, clearanceM: w.clearanceM, required: w.required }));
+    setBrief((b) => (JSON.stringify(b.works ?? []) === JSON.stringify(ws) ? b : withWorks(b, ws)));
+  }, [group.doc.works]); // eslint-disable-line react-hooks/exhaustive-deps
   const gev = useGroupEvaluation(isGroup ? ann : null, group);
-  const gscene = groupScene(group, gev, groupSel);
+  const autoNote = useAutoPlace(group, ann, active, isGroup);
+  // Per-work look in the group show (photo or .glb); display only, kept outside the undo history.
+  const [groupLooks, setGroupLooks] = useState<Record<string, WorkLook>>({});
+  const [groupLookMsg, setGroupLookMsg] = useState<string | null>(null);
+  const [walkRun, setWalkRun] = useState(0);
+  const gscene = groupScene(group, gev, groupSel, groupLooks);
   // ArtFit internal edit state (not a CoStar/Matterport field). Sliders, manual controls and Claude all edit it.
   const editor = useArtworkEditor(active, { widthM: brief.artwork.widthM, depthM: brief.artwork.depthM, heightM: brief.artwork.heightM, baseElevationM: 0, color: "default", material: "matte" });
   const es = editor.state;
@@ -232,11 +245,31 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
   const fmtDims = (d: { widthM: number; depthM: number; heightM: number }) => `${d.widthM} × ${d.depthM} × ${d.heightM} m`;
   const sizeIsFile = !!modelSizing && es.widthM === modelSizing.file.widthM && es.depthM === modelSizing.file.depthM && es.heightM === modelSizing.file.heightM;
   const stretched = !!model && isStretched(model, es);
+  const importGroupLook = async (file: File | undefined, workId?: string | null) => {
+    if (!file) return;
+    const target = workId ?? groupSel ?? group.works[0]?.id;
+    const w = group.works.find((x) => x.id === target);
+    if (!w) return;
+    setGroupSel(w.id);
+    setGroupLookMsg(`Loading ${file.name}…`);
+    try {
+      if (/\.glb$/i.test(file.name)) {
+        const m = await loadArtworkModel(file);
+        setGroupLooks((l) => ({ ...l, [w.id]: { model: m } }));
+        setGroupLookMsg(`${m.title} is now ${w.title}, stretched to its real size ${w.widthM} × ${w.depthM} × ${w.heightM} m.`);
+      } else if (/^image\//.test(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name)) {
+        const ph = await loadArtworkPhoto(file);
+        setGroupLooks((l) => ({ ...l, [w.id]: { photo: ph } }));
+        setGroupLookMsg(`Photo on the front of ${w.title}.`);
+      } else setGroupLookMsg("Use a .glb 3D model or a JPG/PNG/WebP photo.");
+    } catch (e) { setGroupLookMsg((e as Error).message); }
+  };
+  const dropTarget = group.works.find((w) => w.id === groupSel) ?? group.works[0];
   const dropHandlers = {
     onDragEnter: (e: React.DragEvent) => { if (!e.dataTransfer.types.includes("Files")) return; e.preventDefault(); dragDepth.current++; setDragOver(true); },
     onDragOver: (e: React.DragEvent) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } },
     onDragLeave: () => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragOver(false); },
-    onDrop: (e: React.DragEvent) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); importAny(e.dataTransfer.files[0]); },
+    onDrop: (e: React.DragEvent) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); if (isGroup) void importGroupLook(e.dataTransfer.files[0]); else importAny(e.dataTransfer.files[0]); },
   };
   const viewLabel = view === "scan" ? "Matterport scan view" : "3D planning view";
   const ctxFor = (): ApplyContext => ({
@@ -280,7 +313,8 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
   const cand = sd?.inspect?.candidate;
   const nameOf = (id: string) => data[id]?.inspect?.candidate.displayName ?? id;
   const editNote = `Artwork state v${es.version}: ${userPose ? `placed by you at x=${userPose.x.toFixed(2)} z=${userPose.z.toFixed(2)} rot ${userPose.rotDeg}°` : "best sampled placement"}; bottom ${es.baseElevationM} m above floor${es.baseElevationM > 0 ? " (elevated preview; suspension/fixing/load not checked)" : ""}; finish ${FINISH_COLORS[es.color].label}, ${es.material}`;
-  const checklist = sd?.inspect ? buildChecklist({ inspect: sd.inspect, result: server.res, brief: { ...brief, artwork: { ...art, baseElevationM: es.baseElevationM } }, requiredC: C, selectedOption: [chosen, editNote].filter(Boolean).join(" · ") }) : "";
+  const singleOcc = useOccupancy(isGroup ? null : ann, pose ? [{ id: "single", title: "Your work", widthM: art.widthM, depthM: art.depthM, clearanceM: C, pose }] : []);
+  const checklist = sd?.inspect ? buildChecklist({ inspect: sd.inspect, result: server.res, brief: { ...brief, artwork: { ...art, baseElevationM: es.baseElevationM } }, requiredC: C, selectedOption: [chosen, editNote].filter(Boolean).join(" · "), peopleLine: occupancyChecklistLine(singleOcc) }) : "";
   // Scan overlay for the active space; the last one per space is kept for scans that stay mounted in the background.
   const scanOverlayNow: ScanOverlay | null = overlay && pose ? {
                   baseElevationM: es.baseElevationM, colorHex: finish.hex, material: es.material,
@@ -318,10 +352,13 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
       group: {
         works: ws.map((w) => {
           const sc = id === active ? gscene.works.find((x) => x.id === w.id) : undefined;
-          return { corners: workBody(w, w.pose!), heightM: w.heightM, colorHex: sc?.color ?? "#171717", issue: issues.has(w.id), label: sc?.label ?? w.title, viewPoint: sc?.viewPoint ?? null, selected: w.id === groupSel };
+          const look = groupLooks[w.id];
+          return { corners: workBody(w, w.pose!), heightM: w.heightM, colorHex: sc?.color ?? "#171717", issue: issues.has(w.id), label: sc?.label ?? w.title, viewPoint: sc?.viewPoint ?? null, selected: w.id === groupSel,
+            model: look?.model ? { id: look.model.id, parts: look.model.parts } : null, photo: look?.photo ?? null };
         }),
         route: id === active ? gscene.route : [], entrance: id === active ? gscene.entrance : null,
       },
+      tour: id === active && gev ? gev.route.order.map((wid) => { const w = ws.find((x) => x.id === wid); return w ? { label: w.title, center: { x: w.pose!.x, z: w.pose!.z }, heightM: w.heightM, corners: workBody(w, w.pose!) } : null; }).filter(Boolean) as { label: string; center: { x: number; z: number }; heightM: number; corners: { x: number; z: number }[] }[] : [],
     };
   };
   const [planRendered, setPlanRendered] = useState("not shown");
@@ -332,7 +369,7 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
       <header className="studio-bar">
         <div className="studio-title">
           <button className="text-button" onClick={onBack}>← Spaces</button>
-          <div><div className="eyebrow">03 / The placement studio</div><h1>{cand?.displayName ?? "A study in space."}</h1></div>
+          <div><h1>{cand?.displayName ?? "A study in space."}</h1></div>
         </div>
         {spaceIds.length > 1 && <div className="studio-spaces" role="group" aria-label="Spaces">
           {spaceIds.map((id, i) => {
@@ -348,21 +385,25 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
           <button type="button" aria-pressed={isGroup} onClick={() => setMode("group")}>Group show</button>
         </div>
         <div className="tabs" role="group" aria-label="View">
-          {(["plan", "split", "scan"] as const).map((k) => <button key={k} className={view === k ? "on" : ""} aria-pressed={view === k} onClick={() => setView(k)}>{k === "plan" ? "3D planning view" : k === "scan" ? "Original Matterport scan" : "Side by side"}</button>)}
+          {(["plan", "split", "scan"] as const).map((k) => <button key={k} className={view === k ? "on" : ""} aria-pressed={view === k} onClick={() => setView(k)}>{k === "plan" ? "3D plan" : k === "scan" ? "Scan" : "Compare views"}</button>)}
           <span className="status-line">{(local.busy || server.busy) && <><span className="spinner" /> Calculating</>}</span>
+        </div>
+        <div className="panel-switches" role="group" aria-label="Workspace panels">
+          <button type="button" aria-expanded={leftOpen} aria-controls="artworks-panel" onClick={() => setLeftOpen((v) => !v)}>Artworks</button>
+          <button type="button" aria-expanded={rightOpen} aria-controls="layout-panel" onClick={() => setRightOpen((v) => !v)}>Layout</button>
         </div>
       </header>
 
       <div className="studio-stage" {...dropHandlers}>
-        {dragOver && <div className="drop-hint" aria-hidden="true"><strong>Drop a photo or a .glb</strong><span>A front photo goes on the box face; a 3D model replaces the box.</span></div>}
+        {dragOver && <div className="drop-hint" aria-hidden="true"><strong>Drop a photo or a .glb</strong><span>{isGroup ? `It goes on ${dropTarget?.title ?? "the selected work"}${groupSel ? "" : " (select a work to choose another)"}.` : "A front photo goes on the box face; a 3D model replaces the box."}</span></div>}
         <div className="stage-views">
             {view !== "scan" && (
               <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", minWidth: 0 }}>
                 {ann ? <PlanningView annotation={ann} overlay={isGroup ? null : overlay} artworkHeightM={art.heightM} attempt={userPose ? false : !shown?.selectedPose} conflict={!posePasses} limiter={isGroup ? null : limiter} wallHeightM={Math.min(cand?.ceilingHeightM ?? 3, 4)}
                     baseElevationM={es.baseElevationM} finish={finish} onViewRight={(r) => { planRight.current = r; }}
                     model={isGroup ? null : modelView} viewKey={active} photo={isGroup ? null : photo}
-                    group={isGroup ? { ...gscene, onSelect: setGroupSel } : null}
-                    viewInset={wide ? { l: leftOpen ? 312 : 0, r: rightOpen && view === "plan" ? 352 : 0, t: 44, b: dockH ? dockH + 12 : 0 } : undefined} />
+                    group={isGroup ? { ...gscene, onSelect: setGroupSel, walkRun } : null}
+                    viewInset={wide ? { l: 0, r: 0, t: 12, b: 12 } : undefined} />
                   : <div className="page muted">{sd?.error ?? (sd ? "No traced geometry for this space — spatial result unknown." : "Loading…")}</div>}
               </div>
             )}
@@ -372,7 +413,7 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
               if (!mid) return null;
               const isActive = id === active;
               return <div key={id} style={{ flex: 1, display: isActive && view !== "plan" ? "flex" : "none", minWidth: 0 }}>
-                <MatterportEmbed modelId={mid} editVersion={isActive ? es.version : undefined}
+                <MatterportEmbed modelId={mid} editVersion={isActive ? es.version : undefined} walkRun={isActive && isGroup ? walkRun : 0}
                   onViewRight={(r) => { scanRightBy.current[id] = r; if (id === activeRef.current) scanRight.current = r; }}
                   onRenderState={(st) => { scanRenderBy.current[id] = st; if (id === activeRef.current) setScanRender(st); }}
                   overlay={isGroup ? groupScanOverlay(id) : isActive ? scanOverlayNow ?? lastScanOverlay.current[id] ?? null : lastScanOverlay.current[id] ?? null} />
@@ -380,24 +421,17 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
             })}
             {view !== "plan" && !scanModelOf(active) && <div className="page muted">No Matterport model associated with this space.</div>}
         </div>
-        <div className="overlay-badges">
-          {isGroup && <span className="badge info">Group show · {gscene.works.length}/{group.works.length} works placed</span>}
-          {!isGroup && model && <span className="badge">3D model: {model.title}</span>}
-          {photo && !model && <span className="badge">Front photo: {photo.fileName}</span>}
-                  <span className="badge info">Scenario: as scanned</span>
-                  <span className="badge">3D planning view reconstructed from traced geometry</span>
-                  {!userPose && shown?.displayAttemptPose && <span className="badge conflict">Illustrative tested conflict</span>}
-                  {userPose && <span className="badge">Position placed by you</span>}
-                  {es.baseElevationM > 0 && <span className="badge">Elevated preview · {es.baseElevationM} m</span>}
-        </div>
+        {tourOnly && <div className="tour-banner" role="status"><strong>3D tour only.</strong> This listing has no traced floor plan yet, so ArtFit can’t check a placement here. The tour is linked to the building and may not show the listed unit.</div>}
+        {!isGroup && !tourOnly && es.baseElevationM > 0 && <div className="overlay-badges"><span className="badge">Elevated preview · {es.baseElevationM} m</span></div>}
 
-        <aside className={"panel panel-left" + (leftOpen ? "" : " closed")} aria-label="Your work" aria-hidden={!leftOpen}>
+        <aside id="artworks-panel" className={"panel panel-left" + (leftOpen ? "" : " closed")} aria-label="Artworks" hidden={!leftOpen}>
           <div className="panel-head">
-            <div><div className="eyebrow">{isGroup ? "Your show" : "Your work"}</div><h2>{isGroup ? "Works & artists" : <>Artwork &amp; space</>}</h2></div>
+            <h2>Artworks</h2>
             <button type="button" className="panel-hide" aria-label="Hide your work panel" onClick={() => setLeftOpen(false)}>←</button>
           </div>
           <div className="panel-body">
-            {isGroup ? <GroupWorksPanel g={group} selected={groupSel} onSelect={setGroupSel} viewLabel={viewLabel} viewRight={() => (view === "scan" ? scanRight.current : planRight.current ?? defaultPlanViewRight())} /> : <>
+            {isGroup ? <GroupWorksPanel g={group} selected={groupSel} onSelect={setGroupSel} looks={groupLooks} lookMsg={groupLookMsg}
+              onLookFile={(id, f) => void importGroupLook(f, id)} onLookRemove={(id) => { setGroupLooks((l) => { const n = { ...l }; delete n[id]; return n; }); setGroupLookMsg(null); }} viewLabel={viewLabel} viewRight={() => (view === "scan" ? scanRight.current : planRight.current ?? defaultPlanViewRight())} /> : <>
             <div className="card">
           <SliderNum label="Width (m)" value={art.widthM} min={0.5} max={12} step={0.1} onChange={(x) => editor.setDims({ widthM: x }, "slider:width")} />
           <SliderNum label="Depth (m)" value={art.depthM} min={0.5} max={10} step={0.1} onChange={(x) => editor.setDims({ depthM: x }, "slider:depth")} />
@@ -444,8 +478,8 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
           </div>
         </aside>
 
-        <aside className={"panel panel-right" + (rightOpen ? "" : " closed")} aria-label="Placement result" aria-hidden={!rightOpen}>
-          {isGroup ? <GroupReviewPanel g={group} ev={gev} ann={ann} onSelect={setGroupSel} onHide={() => setRightOpen(false)} otherSpaces={spaceIds.filter((x) => x !== active).map((x) => ({ id: x, name: data[x]?.inspect?.candidate.displayName ?? x, ann: data[x]?.annotation ?? null }))} /> : <>
+        <aside id="layout-panel" className={"panel panel-right" + (rightOpen ? "" : " closed")} aria-label="Layout" hidden={!rightOpen}>
+          {isGroup ? <GroupReviewPanel g={group} ev={gev} ann={ann} autoNote={autoNote} spaceUse={cand?.spaceUse} onWalk={() => setWalkRun((n) => n + 1)} onSelect={setGroupSel} onHide={() => setRightOpen(false)} otherSpaces={spaceIds.filter((x) => x !== active).map((x) => ({ id: x, name: data[x]?.inspect?.candidate.displayName ?? x, ann: data[x]?.annotation ?? null }))} /> : <>
           <div className="panel-head">
             <div>
               <div className={`verdict ${headline.cls}`}><span aria-hidden>{headline.icon}</span>{headline.text}</div>
@@ -472,6 +506,7 @@ export default function Workspace({ spaceIds, brief, setBrief, onBack }: { space
           {shown?.status === "fit" && shown.heightCheck !== "pass" && <div className="faint">Fits on the floor; height not confirmed.</div>}
           {server.error && <div className="warn">Server: {server.error}</div>}
             </div>
+            <OccupancyCard est={singleOcc} spaceUse={cand?.spaceUse} />
             <div className="card">
           <h3>What we know about the space</h3><p className="faint">These don’t change when you move the work.</p>
           <table className="kv"><tbody>
@@ -556,8 +591,6 @@ Browser/server check: ${fingerprintsAgree ? "same scan fingerprint" : server.bus
           </>}
         </aside>
 
-        {!leftOpen && <button type="button" className="panel-tab panel-tab-left" onClick={() => setLeftOpen(true)}>Your work →</button>}
-        {!rightOpen && <button type="button" className="panel-tab panel-tab-right" onClick={() => setRightOpen(true)}>← <span className={`tab-verdict ${headline.cls}`}>{headline.icon}</span> Result</button>}
 
         {isGroup
           ? <GroupAiBar g={group} spaceId={active} ann={ann} aiReady={claudeReady} onSelect={setGroupSel} viewRight={() => (view === "scan" ? scanRight.current : planRight.current ?? defaultPlanViewRight())} />

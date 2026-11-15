@@ -25,11 +25,25 @@ export interface ArtworkSceneSpec {
   model?: { id: string; parts: ModelPart[]; override: { hex: string; roughness: number } | null } | null;
   /** Group show: all works (colour = artist) and the walkable route; replaces the single-artwork drawing. */
   group?: {
-    works: { corners: Vec2[]; heightM: number; colorHex: string; issue: boolean; label: string; viewPoint: Vec2 | null; selected: boolean }[];
+    works: { corners: Vec2[]; heightM: number; colorHex: string; issue: boolean; label: string; viewPoint: Vec2 | null; selected: boolean;
+      model?: { id: string; parts: ModelPart[] } | null; photo?: { id: string; canvas: HTMLCanvasElement; aspect: number } | null }[];
     route: Vec2[]; entrance: Vec2 | null;
   } | null;
   /** Front photo for the box's front face (local +z, W × H). */
   photo?: { id: string; canvas: HTMLCanvasElement; aspect: number } | null;
+}
+
+
+/** Without an environment map, swap the model's PBR materials for unlit matcap ones. Never add lights: lights in the
+ * Matterport scene make Showcase recompile every scan material and freeze the page. */
+function toMatcap(THREE: any, group: any) {
+  const matcap = makeMatcap(THREE, "gloss");
+  group.traverse((o: any) => {
+    if (!o.isMesh) return;
+    const old = o.material;
+    o.material = new THREE.MeshMatcapMaterial({ matcap, color: old.color, map: old.map ?? null, side: old.side, transparent: old.transparent, opacity: old.opacity });
+    old.dispose?.();
+  });
 }
 
 export const ARTWORK_COMPONENT = "artfit.artwork";
@@ -44,6 +58,7 @@ export function artworkComponentFactory() {
     modelKey: null as string | null,
     env: null as any,
     envTried: false,
+    groupModels: new Map<string, any>(), // per work slot + model id, reused across edits
     onInit(this: any) {
       const THREE = this.context.three;
       this.group = new THREE.Group();
@@ -52,7 +67,7 @@ export function artworkComponentFactory() {
       this.rebuild();
     },
     onInputsUpdated(this: any) { this.rebuild(); },
-    onDestroy(this: any) { this.clear(); disposeGroup(this.modelGroup); this.modelGroup = null; this.env?.dispose?.(); this.env = null; },
+    onDestroy(this: any) { this.clear(); for (const g of this.groupModels.values()) disposeGroup(g); this.groupModels.clear(); disposeGroup(this.modelGroup); this.modelGroup = null; this.env?.dispose?.(); this.env = null; },
     clear(this: any) {
       if (!this.group) return;
       for (const child of [...this.group.children]) {
@@ -100,7 +115,43 @@ export function artworkComponentFactory() {
           sp.renderOrder = 10;
           return sp;
         };
-        for (const w of spec.group.works) {
+        const ensureEnv = () => {
+          if (!this.envTried) { this.envTried = true; try { this.env = this.context?.renderer ? makeStudioEnvironment(THREE, this.context.renderer) : null; } catch { this.env = null; } }
+          return this.env;
+        };
+        const usedKeys = new Set<string>();
+        for (const [wi, w] of spec.group.works.entries()) {
+          const [c0, c1, c2] = w.corners;
+          const cxw = w.corners.reduce((t, p) => t + p.x, 0) / w.corners.length, czw = w.corners.reduce((t, p) => t + p.z, 0) / w.corners.length;
+          const yaw = Math.atan2(-(c1.z - c0.z), c1.x - c0.x), ww = Math.hypot(c1.x - c0.x, c1.z - c0.z), dd = Math.hypot(c2.x - c1.x, c2.z - c1.z);
+          if (w.model) {
+            // The work's own .glb (original materials), stretched to its real size.
+            const key = `${wi}|${w.model.id}|${w.issue}`;
+            usedKeys.add(key);
+            let mg = this.groupModels.get(key);
+            if (!mg) {
+              mg = buildModelGroup(THREE, w.model.parts, { conflict: w.issue, envMap: ensureEnv() });
+              if (!this.env) toMatcap(THREE, mg);
+              mg.userData.cachedModel = true;
+              this.groupModels.set(key, mg);
+            }
+            mg.scale.set(ww, w.heightM, dd); mg.rotation.set(0, yaw, 0); mg.position.set(cxw, y0, czw);
+            this.group.add(mg);
+            this.group.add(line(w.corners, w.selected ? 0x6bdcc5 : 0x111111, 0.025));
+            this.group.add(tag(w.label, { x: cxw, z: czw }, y0 + w.heightM + 0.3, { dark: w.selected, bad: w.issue }));
+            if (w.viewPoint) {
+              const ring = new THREE.Mesh(new THREE.RingGeometry(0.14, 0.22, 32), new THREE.MeshBasicMaterial({ color: 0x1f7a68, side: THREE.DoubleSide, depthWrite: false, transparent: true, opacity: 0.95 }));
+              ring.rotation.x = -Math.PI / 2; ring.position.set(w.viewPoint.x, y0 + 0.03, w.viewPoint.z); ring.renderOrder = 4;
+              this.group.add(ring);
+            }
+            continue;
+          }
+          if (w.photo && !w.issue) {
+            const face = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: photoTexture(THREE, w.photo, Math.round((ww / w.heightM) * 100) / 100) }));
+            face.scale.set(ww, w.heightM, 1); face.position.set(0, w.heightM / 2, dd / 2 + 0.004);
+            const holder = new THREE.Group(); holder.position.set(cxw, y0, czw); holder.rotation.y = yaw; holder.add(face);
+            this.group.add(holder);
+          }
           const geo = new THREE.ExtrudeGeometry(shape(w.corners), { depth: w.heightM, bevelEnabled: false });
           const body = new THREE.Mesh(geo, new THREE.MeshMatcapMaterial({ matcap: makeMatcap(THREE, "soft"), color: new THREE.Color(w.issue ? "#d93025" : w.colorHex), transparent: true, opacity: w.issue ? 0.6 : 0.9 }));
           body.rotation.x = -Math.PI / 2; body.position.y = y0;
@@ -141,6 +192,7 @@ export function artworkComponentFactory() {
           this.group.add(ribbon);
         }
         if (spec.group.entrance) this.group.add(tag("Entrance", spec.group.entrance, y0 + 0.5));
+        for (const [k, g] of this.groupModels) if (!usedKeys.has(k)) { disposeGroup(g); this.groupModels.delete(k); }
         return;
       }
       for (const g of spec.green) this.group.add(flat(g, 0x3fa66a, 0.35, 0.01));
@@ -161,11 +213,7 @@ export function artworkComponentFactory() {
         if (this.modelKey !== key) {
           disposeGroup(this.modelGroup);
           this.modelGroup = buildModelGroup(THREE, spec.model.parts, { override: spec.model.override, conflict: spec.conflict, envMap: this.env });
-          if (!this.env) {
-            // No renderer for IBL: add a simple light rig to the model group so it is not black.
-            this.modelGroup.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.2));
-            const key2 = new THREE.DirectionalLight(0xffffff, 2); key2.position.set(2, 4, 3); this.modelGroup.add(key2);
-          }
+          if (!this.env) toMatcap(THREE, this.modelGroup); // no renderer for IBL: unlit, and no lights added
           this.modelGroup.userData.cachedModel = true;
           this.modelKey = key;
         }
