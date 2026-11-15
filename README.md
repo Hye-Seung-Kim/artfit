@@ -53,6 +53,8 @@ Visible exhibition agent: `POST /api/agent/show` streams its work in Discover us
 
 A pose is valid when the artwork rectangle lies inside the floor polygon (concave floors handled) and has no interior overlap with an active obstacle. Clearance is the minimum distance to the floor boundary and to every blocker. Circle columns use an analytic distance. The search covers a 0.10 m grid at 0°/90° (optionally 0/45/90/135°). Decisions use raw values. Displayed values are rounded down to 0.05 m. "Best clearance among tested placements" never means maximum possible clearance.
 
+Basis of the numbers: clearance is the user's viewing-room preference (presets 0.915 m and 1.525 m are the ADA 2010 §403.5 accessible-route widths of 36 in and 60 in). Group routes are drawn only through 0.915 m (36 in) of clear width. Visitor estimates use IBC Table 1004.5 load factors (exhibit gallery 30 sq ft net, standing 5 sq ft net), IBC §1005.3.2 egress width (0.2 in per occupant) and the 49-occupant two-exit threshold of IBC Table 1006.2.1, as planning estimates rather than a legal occupant load. People at each work at once (about 1 m² each) and the standing spot used for route checks are ArtFit assumptions. Suggested group layouts come from randomized greedy restarts and are not proven optimal.
+
 ## Current status (honest)
 
 - Candidates A/B (Houston Flex: 6003 Bellaire Blvd Suite I, 7001 Mullins Dr Suite E) have **draft** geometry and a **proposed** exact-suite match. A human must review both in `/annotate`. Until then, V = 0 and verdicts are "Spatial result unknown" with a labeled exploratory calculation. See `docs/DECISIONS.md`.

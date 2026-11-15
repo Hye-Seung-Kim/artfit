@@ -21,7 +21,7 @@ export function OccupancyCard({ est, spaceUse }: { est: OccupancyEstimate | null
       <table className="kv"><tbody>
         <tr><td>Open floor</td><td>{m2(est.netM2)} <span className="faint">= traced {m2(est.floorM2)} − works {m2(est.worksM2)}{est.fixedM2 > 0.5 ? ` − fixed objects ${m2(est.fixedM2)}` : ""}</span></td></tr>
         <tr><td>Doorways</td><td>{est.doors.length ? <>{est.doors.map((d) => `${d.widthM.toFixed(2)} m`).join(", ")} → about {est.byDoors} people if every one is an exit <span className="faint">(0.2 in of width each)</span></> : "No doorway traced; door capacity not estimated."}</td></tr>
-        {est.perWork.length > 0 && <tr><td>At each work at once</td><td>{est.perWork.map((w) => `${w.title}: ~${w.atOnce}`).join(" · ")} <span className="faint">(about 1 m² each in its open viewing room)</span></td></tr>}
+        {est.perWork.length > 0 && <tr><td>At each work at once</td><td>{est.perWork.map((w) => `${w.title}: ~${w.atOnce}`).join(" · ")} <span className="faint">(ArtFit assumption: about 1 m² each in its open viewing room)</span></td></tr>}
       </tbody></table>
       {(est.twoExits.gallery || est.twoExits.standing) && (
         <p className="warn">Above {TWO_EXIT_THRESHOLD} people{est.twoExits.gallery ? "" : " (the standing event)"}, an assembly space usually needs at least two exits. {est.twoExits.tracedDoorways} doorway{est.twoExits.tracedDoorways === 1 ? " is" : "s are"} traced, but whether they are exits isn’t known.</p>

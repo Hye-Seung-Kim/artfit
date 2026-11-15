@@ -65,7 +65,10 @@ export interface GroupPlan {
   metrics: { placed: number; requiredPlaced: number; requiredTotal: number; minSlackM: number | null; routeM: number | null; moved: string[]; kept: string[]; notPlaced: string[] };
 }
 
-const PERSON_R = 0.25; // half shoulder width + margin for the walkable grid
+// Walkable clear width 36 in (0.915 m), the ADA 2010 Standards §403.5.1 minimum for an accessible route; a grid cell
+// is walkable when its centre is at least half of that from walls, works and fixed objects.
+export const ROUTE_CLEAR_WIDTH_M = 36 * 0.0254;
+const PERSON_R = ROUTE_CLEAR_WIDTH_M / 2;
 const GRID = 0.2;
 
 export const workId = (id: string) => `work:${id}`;
@@ -222,7 +225,8 @@ export function entrancePoint(ann: SpatialAnnotation): Vec2 | null {
   return e.shape.kind === "polygon" ? centroid(e.shape.poly) : e.shape.c;
 }
 
-/** A spot to stand and look at the work: in front (local +z) first, then back, sides. */
+/** A spot to stand and look at the work: in front (local +z) first, then back, sides. The distance (0.7 × clearance,
+ *  0.6–1.0 m) is an ArtFit assumption used only to test that visitors can reach the work, not a viewing standard. */
 function viewCandidates(w: GroupWork, pose: Pose): Vec2[] {
   const t = (pose.rotDeg * Math.PI) / 180, c = Math.cos(t), s = Math.sin(t);
   const v = Math.min(1.0, Math.max(0.6, w.clearanceM * 0.7));

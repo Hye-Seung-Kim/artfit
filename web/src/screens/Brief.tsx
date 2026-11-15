@@ -46,7 +46,10 @@ const STEPS = [
   { key: "review", label: "Review" },
 ] as const;
 type StepKey = (typeof STEPS)[number]["key"];
-const CLEARANCE_PRESETS = [0.9, 1.2, 1.5, 2];
+// 0.915 m = 36 in, the ADA 2010 §403.5.1 minimum accessible-route width; 1.525 m = 60 in, the ADA §403.5.2/§403.5.3
+// width that lets a wheelchair turn or two people pass. 1.2 and 2 m are in-between and generous choices, not standards.
+const CLEARANCE_PRESETS = [0.915, 1.2, 1.525, 2];
+const PRESET_NOTE: Record<number, string> = { 0.915: "ADA minimum route width (36 in)", 1.525: "ADA turning and passing width (60 in)" };
 
 function Num({ label, value, onChange, step = 0.1, min = 0, allowNull = false, unit = "m", autoFocus = false }: { label: string; value: number | null; onChange: (v: number | null) => void; step?: number; min?: number; allowNull?: boolean; unit?: string; autoFocus?: boolean }) {
   const id = useId();
@@ -235,13 +238,13 @@ export default function Brief({ brief, setBrief, onSearch, busy, error }: { brie
       body = <Stagger items={[
         H("04", works.length > 1 ? "How much room around each work?" : "How much room around it?", works.length > 1 ? "The default walking space on every side of each work (the aqua band in the study). Set exceptions for single works later in the studio." : "The walking space you want on every side. It shows as the aqua band in the study."),
         <div className="ob-presets" role="group" aria-label="Preferred clearance presets">
-          {CLEARANCE_PRESETS.map((v) => <button key={v} type="button" aria-pressed={brief.preferredClearanceM === v} onClick={() => set({ preferredClearanceM: v })}>{v} m</button>)}
+          {CLEARANCE_PRESETS.map((v) => <button key={v} type="button" aria-pressed={brief.preferredClearanceM === v} onClick={() => set({ preferredClearanceM: v })} title={PRESET_NOTE[v]}>{v} m{PRESET_NOTE[v] ? <span className="faint"> · ADA</span> : null}</button>)}
         </div>,
         <div className="field-grid">
           <Num label="Preferred clearance" value={brief.preferredClearanceM} onChange={(v) => set({ preferredClearanceM: v ?? 0 })} step={0.05} />
           <Num label="Minimum clearance" value={brief.minimumClearanceM} onChange={(v) => set({ minimumClearanceM: v })} step={0.05} allowNull />
         </div>,
-        <p className="field-hint">Leave the minimum empty to keep your preferred clearance. Set one only if you’d accept a tighter fit; no safety minimum is assumed.</p>,
+        <p className="field-hint">Leave the minimum empty to keep your preferred clearance. Set one only if you’d accept a tighter fit; no safety minimum is assumed. 0.915 m and 1.525 m are the ADA accessible-route widths (36 in, and 60 in for turning or passing); routes are drawn only where 0.915 m is clear.</p>,
       ]} />;
       break;
     case "setting":

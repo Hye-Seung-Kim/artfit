@@ -12,7 +12,8 @@ import type { Polygon, Pose, SpatialAnnotation } from "./types.js";
 export const SQM_PER_PERSON_GALLERY = 30 * 0.09290304;   // 2.787 m²
 export const SQM_PER_PERSON_STANDING = 5 * 0.09290304;   // 0.465 m²
 export const EGRESS_M_PER_PERSON = 0.2 * 0.0254;         // 5.08 mm of door width
-export const SQM_PER_VIEWER = 1.0;                       // comfortable spacing in front of a work
+// ArtFit planning assumption, not a code or research figure: about one person per m² of open viewing room.
+export const SQM_PER_VIEWER = 1.0;
 export const TWO_EXIT_THRESHOLD = 49;
 
 export interface OccupancyWork { id: string; title: string; widthM: number; depthM: number; clearanceM: number; pose: Pose }
