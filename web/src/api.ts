@@ -13,6 +13,7 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
   return j as T;
 }
 
+export type SpaceContact = { name: string | null; company: string | null; role: string; email: string | null; phone: string | null };
 export type CandidateCard = {
   id: string; displayName: string; address: string | null; city: string | null; suite: string | null; spaceUse: string | null;
   listedAreaSqFt: number | null; availableOnDate: string | null; availabilityType: string | null; dateStatus: string;
@@ -22,6 +23,7 @@ export type CandidateCard = {
   matterportLinkLevel: string; hasAnnotation: boolean; matchProposed: boolean; matchVerified: boolean; spatiallyVerified: boolean;
   listedAreaM2: number | null; requiredAreaM2: number; ceilingHeightM: number | null;
   heightContext: "listed_clears" | "listed_tight" | "listed_below_tallest" | "unknown";
+  contacts: SpaceContact[]; brokerageCompany: string | null;
   conditionLabels: Record<string, string>; certifiedFreshDate: string | null;
 };
 export type SearchResult = {

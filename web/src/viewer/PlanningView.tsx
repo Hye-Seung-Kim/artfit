@@ -1,5 +1,5 @@
 // Plan B renderer (spec §10.2): 3D planning view reconstructed from traced geometry, Showcase SDK frame (x, z; y up; m).
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Html, Line, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -127,9 +127,13 @@ export interface ViewerProps {
     works: { id: string; corners: Vec2[]; heightM: number; color: string; selected: boolean; issue: boolean; locked: boolean; label: string; clearanceM: number; viewPoint: Vec2 | null; pose: { x: number; z: number; rotDeg: number }; widthM: number; depthM: number;
       look: { model?: { id: string; parts: ModelPart[] }; photo?: ArtworkPhoto } | null }[];
     route: Vec2[]; entrance: Vec2 | null; onSelect?: (id: string) => void;
+    /** Drag-to-move: total floor offset in metres, reported once on release. */
+    onMove?: (id: string, dx: number, dz: number) => void;
     /** Increment to play the walk-through once. */
     walkRun?: number;
   } | null;
+  /** Single work: drag-to-move, total floor offset in metres reported once on release. */
+  onMoveArtwork?: (dx: number, dz: number) => void;
   /** Identifies the space; its camera view is saved and restored when switching spaces. */
   viewKey?: string;
 }
@@ -172,6 +176,56 @@ function Walker({ path, stops, run }: { path: Vec2[]; stops: { at: Vec2; look: V
   return <group ref={ref} visible={false}><primitive object={fig} /></group>;
 }
 
+/**
+ * Drag a work across the floor. While dragging, the children follow the pointer on the floor plane (y = 0) and the
+ * orbit camera is paused; on release the total move is reported once (one undo step). A short click stays a click.
+ */
+function Draggable({ enabled, onDrop, onClick, children }: { enabled: boolean; onDrop: (dx: number, dz: number) => void; onClick?: () => void; children: React.ReactNode }) {
+  const controls = useThree((st) => st.controls) as any;
+  const { gl } = useThree();
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), []);
+  const hit = useMemo(() => new THREE.Vector3(), []);
+  const drag = useRef<{ x: number; z: number; id: number; moved: boolean } | null>(null);
+  const [off, setOff] = useState<[number, number]>([0, 0]);
+  const end = (e: any, commit: boolean) => {
+    const d = drag.current;
+    if (!d) return;
+    drag.current = null;
+    try { e.target?.releasePointerCapture?.(d.id); } catch { /* ignore */ }
+    if (controls) controls.enabled = true;
+    gl.domElement.style.cursor = "";
+    const [dx, dz] = off;
+    setOff([0, 0]);
+    if (commit && d.moved && Math.hypot(dx, dz) >= 0.02) onDrop(dx, dz);
+    else if (commit && !d.moved) onClick?.();
+  };
+  return (
+    <group position={[off[0], 0, off[1]]}
+      onPointerOver={() => { if (!drag.current) gl.domElement.style.cursor = enabled ? "grab" : "pointer"; }}
+      onPointerOut={() => { if (!drag.current) gl.domElement.style.cursor = ""; }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        if (!enabled) { onClick?.(); return; }
+        if (!e.ray.intersectPlane(plane, hit)) return;
+        (e.target as any).setPointerCapture?.(e.pointerId);
+        drag.current = { x: hit.x, z: hit.z, id: e.pointerId, moved: false };
+        if (controls) controls.enabled = false;
+        gl.domElement.style.cursor = "grabbing";
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d || !e.ray.intersectPlane(plane, hit)) return;
+        e.stopPropagation();
+        const dx = hit.x - d.x, dz = hit.z - d.z;
+        if (Math.hypot(dx, dz) > 0.03) d.moved = true;
+        setOff([Math.round(dx * 100) / 100, Math.round(dz * 100) / 100]);
+      }}
+      onPointerUp={(e) => { e.stopPropagation(); end(e, true); }}
+      onPointerCancel={(e) => end(e, false)}
+    >{children}</group>
+  );
+}
+
 /** Group show layer: every work (colour = artist), the selected work's viewing room, standing spots and the route. */
 function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
   const sel = group.works.find((w) => w.selected) ?? null;
@@ -184,7 +238,7 @@ function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
         <Html position={[group.entrance.x, 0.2, group.entrance.z]} center><span className="scene-tag">Entrance</span></Html>
       )}
       {group.works.map((w) => (
-        <group key={w.id} onClick={(e) => { e.stopPropagation(); group.onSelect?.(w.id); }}>
+        <Draggable key={w.id} enabled={!!group.onMove && !w.locked} onClick={() => group.onSelect?.(w.id)} onDrop={(dx, dz) => group.onMove?.(w.id, dx, dz)}>
           {w.selected && <Outline poly={roundedRect(w.pose.x, w.pose.z, w.widthM, w.depthM, w.pose.rotDeg, w.clearanceM)} color={w.issue ? "#d93025" : "#2e7d4f"} dashed y={0.015} />}
           {w.look?.model
             ? <><ModelArtwork corners={w.corners} heightM={w.heightM} y={0} model={{ id: w.look.model.id, parts: w.look.model.parts, override: null }} conflict={w.issue} />
@@ -196,7 +250,7 @@ function GroupLayer({ group }: { group: NonNullable<ViewerProps["group"]> }) {
           <Html position={[w.pose.x, w.heightM + 0.35, w.pose.z]} center>
             <span className={"scene-tag" + (w.selected ? " on" : "") + (w.issue ? " bad" : "")}>{w.label}{w.locked ? " · locked" : ""}</span>
           </Html>
-        </group>
+        </Draggable>
       ))}
       {fig && figWork && <Human at={fig} yaw={Math.atan2(figWork.pose.x - fig.x, figWork.pose.z - fig.z)} />}
       <Walker path={group.route} stops={group.works.filter((w) => w.viewPoint).map((w) => ({ at: w.viewPoint!, look: { x: w.pose.x, z: w.pose.z } }))} run={group.walkRun ?? 0} />
@@ -278,13 +332,13 @@ function ResponsiveCamera({ x, z, span, inset, viewKey }: { x: number; z: number
   return null;
 }
 
-export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight, viewInset, model, viewKey, photo, group }: ViewerProps) {
+export default function PlanningView({ annotation, overlay, artworkHeightM, attempt, limiter, wallHeightM, baseElevationM = 0, finish, conflict = false, onViewRight, viewInset, model, viewKey, photo, group, onMoveArtwork }: ViewerProps) {
   const c = centroid(annotation.floor);
   const bb = bbox(annotation.floor);
   const span = Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ);
   const human = overlay ? figurePlacement(centroid(overlay.artwork), overlay.buffer, annotation.floor, pointInPolygon) : null;
   return (
-    <Canvas shadows camera={{ position: [c.x + span * 0.15, span * 0.85, c.z + span * 0.8], fov: 40 }} style={{ flex: 1 }}>
+    <Canvas shadows gl={{ preserveDrawingBuffer: true }} camera={{ position: [c.x + span * 0.15, span * 0.85, c.z + span * 0.8], fov: 40 }} style={{ flex: 1 }}>
       <color attach="background" args={["#f1f3ef"]} />
       <ambientLight intensity={0.7} />
       <directionalLight position={[c.x + 5, 12, c.z + 6]} intensity={0.9} castShadow />
@@ -303,6 +357,7 @@ export default function PlanningView({ annotation, overlay, artworkHeightM, atte
           {overlay.green.map((p, i) => <FlatPoly key={"g" + i} poly={p} color="#6bdcc5" y={0.006} opacity={0.35} />)}
           {overlay.red.map((p, i) => <FlatPoly key={"r" + i} poly={p} color="#d93025" y={0.008} opacity={0.6} />)}
           <Outline poly={overlay.buffer} color={overlay.red.length ? "#d93025" : "#2e7d4f"} dashed y={0.015} />
+          <Draggable enabled={!!onMoveArtwork} onDrop={(dx, dz) => onMoveArtwork?.(dx, dz)}>
           {model ? (
             <>
               <ModelArtwork corners={overlay.artwork} heightM={artworkHeightM} y={baseElevationM} model={model} conflict={attempt || conflict} />
@@ -314,6 +369,7 @@ export default function PlanningView({ annotation, overlay, artworkHeightM, atte
             roughness={finish?.material === "gloss" ? 0.15 : finish?.material === "satin" ? 0.5 : 1}
             edges={attempt || conflict ? "#d93025" : luminance(finish?.hex ?? "#171717") > 0.5 ? "#111111" : "#9aa09a"} />}
           {!model && photo && !(attempt || conflict) && <PhotoFace corners={overlay.artwork} heightM={artworkHeightM} y={baseElevationM} photo={photo} />}
+          </Draggable>
           {baseElevationM > 0 && (
             <>
               {/* floor projection of the lifted artwork + guides; the plan check uses this projection */}

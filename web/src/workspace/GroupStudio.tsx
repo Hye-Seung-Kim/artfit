@@ -57,16 +57,18 @@ export function exampleGroup(first: { widthM: number; depthM: number; heightM: n
   };
 }
 
-export function useGroupPlanner(opts: { spaceIds: string[]; active: string; seed: { widthM: number; depthM: number; heightM: number; clearanceM: number }; budget: number | null; currency: string; works?: BriefWork[] }) {
+export function useGroupPlanner(opts: { spaceIds: string[]; active: string; seed: { widthM: number; depthM: number; heightM: number; clearanceM: number }; budget: number | null; currency: string; works?: BriefWork[]; initialLayouts?: Record<string, Record<string, Pose | null>> | null }) {
   const [hist, setHist] = useState<Hist>(() => {
     // Works come from the brief (onboarding); a solo brief starts with the one work.
     const works: WorkSpec[] = opts.works?.length
       ? opts.works.map((w, i) => ({ id: w.id, artist: w.artist.trim() || "Artist not set", title: w.title.trim() || `Work ${i + 1}`, widthM: w.widthM, depthM: w.depthM, heightM: w.heightM, clearanceM: w.clearanceM ?? opts.seed.clearanceM, required: w.required }))
       : [{ id: "w-1", artist: "Artist 1", title: "Work 1", ...opts.seed, required: true }];
     const doc: GroupDoc = {
-      works, order: works.map((w) => w.id), costs: [venueItem()], budget: opts.budget, currency: opts.currency, bySpace: {},
+      works, order: works.map((w) => w.id), costs: [venueItem()], budget: opts.budget, currency: opts.currency,
+      // The planning agent's chosen layout per space (only for works that exist), shown as the starting point.
+      bySpace: Object.fromEntries(Object.entries(opts.initialLayouts ?? {}).map(([sid, poses]) => [sid, { poses: Object.fromEntries(Object.entries(poses).filter(([wid]) => works.some((w) => w.id === wid))), locked: [] }])),
     };
-    return { past: [], present: { doc, label: "Group started" }, future: [], version: 1 };
+    return { past: [], present: { doc, label: opts.initialLayouts ? "Layout from the planning agent" : "Group started" }, future: [], version: 1 };
   });
   const doc = hist.present.doc;
   const commit = (next: GroupDoc, label: string) => setHist((h) => ({ past: [...h.past, h.present].slice(-60), present: { doc: next, label }, future: [], version: h.version + 1 }));
@@ -122,14 +124,6 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel, l
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ artist: "", title: "", widthM: 1, depthM: 1, heightM: 1.5, clearanceM: 1, required: true });
   const sel = g.works.find((w) => w.id === selected) ?? null;
-  const nudge = (dir: "left" | "right" | "forward" | "back") => {
-    if (!sel?.pose) return;
-    const r = viewRight();
-    if (!r) return;
-    const v = directionVector(dir, r);
-    g.setPoses({ [sel.id]: { ...sel.pose, x: sel.pose.x + v.x * 0.1, z: sel.pose.z + v.z * 0.1 } }, `Moved ${sel.title} 10 cm ${dir}`);
-  };
-  const turn = (deg: number) => sel?.pose && g.setPoses({ [sel.id]: { ...sel.pose, rotDeg: ((sel.pose.rotDeg + deg) % 360 + 360) % 360 } }, `Turned ${sel.title} ${Math.abs(deg)}°`);
   return (
     <>
       <div className="card">
@@ -180,20 +174,7 @@ export function GroupWorksPanel({ g, selected, onSelect, viewRight, viewLabel, l
           </div>
           <label>Viewing room (m)<input type="number" min={0} step={0.05} value={sel.clearanceM} onChange={(e) => g.updateWork(sel.id, { clearanceM: Math.max(0, Number(e.target.value)) }, `${sel.title}: viewing room ${e.target.value} m`)} /></label>
           <label className="check"><input type="checkbox" checked={sel.required} onChange={(e) => g.updateWork(sel.id, { required: e.target.checked }, `${sel.title}: ${e.target.checked ? "must be in the show" : "optional"}`)} /> Must be in the show</label>
-          {sel.pose ? <>
-            <p className="faint">Arrows move 10 cm relative to the {viewLabel}.</p>
-            <div className="nudge-grid" role="group" aria-label={`Move ${sel.title}`}>
-              <span /><button type="button" aria-label="Move away" disabled={sel.locked} onClick={() => nudge("forward")}>↑</button><span />
-              <button type="button" aria-label="Move left" disabled={sel.locked} onClick={() => nudge("left")}>←</button>
-              <button type="button" aria-label="Move toward you" disabled={sel.locked} onClick={() => nudge("back")}>↓</button>
-              <button type="button" aria-label="Move right" disabled={sel.locked} onClick={() => nudge("right")}>→</button>
-            </div>
-            <div className="row" style={{ marginTop: 8 }}>
-              <button type="button" disabled={sel.locked} onClick={() => turn(-15)}>⟲ 15°</button>
-              <button type="button" disabled={sel.locked} onClick={() => turn(15)}>⟳ 15°</button>
-              <button type="button" className={sel.locked ? "primary" : ""} aria-pressed={sel.locked} onClick={() => g.setLocked([sel.id], !sel.locked, `${sel.locked ? "Unlocked" : "Locked"} ${sel.title}`)}>{sel.locked ? "Locked here" : "Lock position"}</button>
-            </div>
-          </> : <p className="faint">Not placed in this space yet. Use “Suggest layouts” on the right.</p>}
+          <p className="faint">{!sel.pose ? "Not placed in this space yet. Use the layout options on the right." : sel.locked ? "Locked in place. Unlock it in the Move pad to move it." : "Move, turn or lock it with the Move pad on the view, or drag it in the 3D plan."}</p>
           <button type="button" className="text-button danger" onClick={() => { if (window.confirm(`Remove ${sel.title} by ${sel.artist} from the show?`)) { g.removeWork(sel.id); onSelect(null); } }}>Remove from the show</button>
         </div>
       )}

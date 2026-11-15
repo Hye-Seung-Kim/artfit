@@ -112,21 +112,9 @@ export function ManualPlacementControls({ editor, ctxFor, viewLabel }: { editor:
   const step = { value: 10, unit: "cm" as const };
   return (
     <div className="card">
-      <h3>Position, height &amp; finish</h3>
-      <p className="faint">Arrows move 10 cm relative to the {viewLabel}. Your position is checked where you put it; it is not replaced by the search.</p>
-      <div className="nudge-grid" role="group" aria-label="Move the artwork">
-        <span />
-        <button type="button" aria-label="Move away from you" onClick={() => run([{ op: "move", direction: "forward", distance: step }])}>↑</button>
-        <span />
-        <button type="button" aria-label="Move left" onClick={() => run([{ op: "move", direction: "left", distance: step }])}>←</button>
-        <button type="button" aria-label="Move toward you" onClick={() => run([{ op: "move", direction: "back", distance: step }])}>↓</button>
-        <button type="button" aria-label="Move right" onClick={() => run([{ op: "move", direction: "right", distance: step }])}>→</button>
-      </div>
-      <div className="row" style={{ marginTop: 8 }}>
-        <button type="button" onClick={() => run([{ op: "rotate", degrees: 15, rotation: "counterclockwise" }])}>⟲ 15°</button>
-        <button type="button" onClick={() => run([{ op: "rotate", degrees: 15, rotation: "clockwise" }])}>⟳ 15°</button>
-        <button type="button" disabled={s.mode === "auto_best"} onClick={() => run([{ op: "find_best_placement" }])}>Find best placement</button>
-      </div>
+      <h3>Height &amp; finish</h3>
+      <p className="faint">Move and turn it with the Move pad on the view, or drag it in the 3D plan. Your position is checked where you put it; it is not replaced by the search.</p>
+      {s.mode !== "auto_best" && <button type="button" onClick={() => run([{ op: "find_best_placement" }])}>Back to the best placement</button>}
       <label htmlFor="elev">Bottom above floor (m)</label>
       <input id="elev" type="number" min={0} step={0.1} value={s.baseElevationM}
         onChange={(e) => e.target.value !== "" && run([{ op: "set_elevation", value: { value: Number(e.target.value), unit: "m" } }], "manual:elevation")} />

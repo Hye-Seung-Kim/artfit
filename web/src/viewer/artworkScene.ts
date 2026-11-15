@@ -192,6 +192,17 @@ export function artworkComponentFactory() {
           this.group.add(ribbon);
         }
         if (spec.group.entrance) this.group.add(tag("Entrance", spec.group.entrance, y0 + 0.5));
+        if (spec.showFigure) {
+          // 1.70 m reference figure at the selected work's standing spot (else the first one), facing the work.
+          const w = spec.group.works.find((x) => x.selected && x.viewPoint) ?? spec.group.works.find((x) => x.viewPoint);
+          if (w?.viewPoint) {
+            const cx = w.corners.reduce((t, p) => t + p.x, 0) / w.corners.length, cz = w.corners.reduce((t, p) => t + p.z, 0) / w.corners.length;
+            const fig = buildHumanFigure(THREE);
+            fig.position.set(w.viewPoint.x, y0, w.viewPoint.z);
+            fig.rotation.y = Math.atan2(cx - w.viewPoint.x, cz - w.viewPoint.z);
+            this.group.add(fig);
+          }
+        }
         for (const [k, g] of this.groupModels) if (!usedKeys.has(k)) { disposeGroup(g); this.groupModels.delete(k); }
         return;
       }

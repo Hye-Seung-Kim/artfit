@@ -10,20 +10,27 @@ import { ARTWORK_COMPONENT, artworkComponentFactory, type ArtworkSceneSpec } fro
 const SDK_KEY = import.meta.env.VITE_MATTERPORT_SDK_KEY as string | undefined;
 const PLAY_TIMEOUT_MS = 45_000;
 
+/** Screenshot of each live scan (by model id), used by the plan report. */
+export const scanShots = new Map<string, () => Promise<string>>();
+
 export type ScanOverlay = ArtworkSceneSpec & { center: Vec2; label: string; floor: Vec2[];
   /** Group show walk-through: works in viewing order. */
-  tour?: { label: string; center: Vec2; heightM: number; corners: Vec2[] }[] };
+  tour?: { label: string; center: Vec2; heightM: number; sizeM: number; corners: Vec2[]; room: Vec2[] }[] };
 
 type Status = { kind: "loading"; step: string } | { kind: "playing" } | { kind: "error"; reason: string };
 
-export default function MatterportEmbed({ modelId, overlay, editVersion, onViewRight, onRenderState, walkRun }: {
+export default function MatterportEmbed({ modelId, overlay, editVersion, onViewRight, onRenderState, walkRun, onFloorClick, focusKey }: {
   modelId: string; overlay?: ScanOverlay | null;
   /** ArtFit edit version the overlay represents; reported back once it is actually in the scene. */
   editVersion?: number;
   onViewRight?: (v: Vec2) => void;
   onRenderState?: (s: string) => void;
+  /** "Click to place": while set, a click on the scan floor reports that floor point (Showcase x/z). */
+  onFloorClick?: ((p: Vec2) => void) | null;
   /** Increment to walk the group show in viewing order (moves between real scan viewpoints). */
   walkRun?: number;
+  /** Changes when the user picks a work (list, pad, plan): the camera flies to the best viewpoint for it. */
+  focusKey?: string | null;
 }) {
   const onViewRightRef = useRef(onViewRight); onViewRightRef.current = onViewRight;
   const onRenderStateRef = useRef(onRenderState); onRenderStateRef.current = onRenderState;
@@ -36,6 +43,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   const [sweeps, setSweeps] = useState<{ sid: string; position: { x: number; y: number; z: number } }[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const overlayRef = useRef(overlay);
+  const floorClickRef = useRef(onFloorClick); floorClickRef.current = onFloorClick;
   const viewModeRef = useRef<string | null>(null); // current Showcase mode (inside / dollhouse / floorplan)
   overlayRef.current = overlay;
 
@@ -70,6 +78,12 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
     (async () => {
       try {
         const mp = await viewer.playingPromise;
+        scanShots.set(modelId, async () => {
+          // Showcase only redraws on change; nudge the camera a hair (and back) so a fresh frame exists to capture.
+          try { await mp.Camera.rotate(0.3, 0, { speed: 30 }); await mp.Camera.rotate(-0.3, 0, { speed: 30 }); } catch { /* ignore */ }
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+          return mp.Renderer.takeScreenShot({ width: 1280, height: 720 }, { mattertags: false, sweeps: false });
+        });
         if (cancelled) return;
         clearInterval(timeout);
         if (import.meta.env.DEV) (window as any).__mpBundle = mp; // dev-only debugging handle
@@ -121,15 +135,22 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
   }, [specKey, status.kind, editVersion]);
 
   /** Move to the scan viewpoint that best shows a target: in the room, outside its clearance, nearest, facing it. */
-  const lookAt = async (mp: any, t: { center: Vec2; heightM: number; floorY: number; floor: Vec2[]; buffer: Vec2[] }) => {
+  /**
+   * Move to the scan viewpoint that best shows a target: in the room, outside its viewing room and every work,
+   * and far enough back that the whole work fits in the view (standing right against it makes the wide-angle
+   * scan lens bend it). Then face it.
+   */
+  const lookAt = async (mp: any, t: { center: Vec2; heightM: number; sizeM: number; floorY: number; floor: Vec2[]; buffer: Vec2[]; avoid?: Vec2[][] }) => {
     const INSIDE = mp.Mode.Mode.INSIDE;
     const inside = () => viewModeRef.current === INSIDE || viewModeRef.current === "mode.inside";
     const dist = (s: (typeof sweeps)[number]) => Math.hypot(s.position.x - t.center.x, s.position.z - t.center.z);
     const at = (s: (typeof sweeps)[number]) => ({ x: s.position.x, z: s.position.z });
-    const inRoom = sweeps.filter((s) => pointInPolygon(at(s), t.floor) >= 0);
+    const inRoom = sweeps.filter((s) => pointInPolygon(at(s), t.floor) >= 0 && !(t.avoid ?? []).some((a) => pointInPolygon(at(s), a) >= 0));
     const clear = inRoom.filter((s) => pointInPolygon(at(s), t.buffer) < 0);
+    const ideal = Math.max(2, 1.3 * Math.max(t.sizeM, t.heightM)); // whole work in frame
     const pool = clear.length ? clear : inRoom.length ? inRoom : sweeps;
-    const s = [...pool].sort((a, b) => dist(a) - dist(b))[0];
+    const score = (s: (typeof sweeps)[number]) => { const d = dist(s); return d < ideal ? (ideal - d) * 3 : d - ideal; };
+    const s = [...pool].sort((a, b) => score(a) - score(b))[0];
     const dx = t.center.x - s.position.x, dz = t.center.z - s.position.z;
     const rotation = { x: -(Math.atan2(s.position.y - t.floorY - t.heightM / 2, Math.hypot(dx, dz)) * 180) / Math.PI, y: (Math.atan2(-dx, -dz) * 180) / Math.PI };
     if (!inside()) await mp.Mode.moveTo(INSIDE, { sweep: s.sid, rotation, transition: mp.Mode.TransitionType?.FLY });
@@ -155,7 +176,7 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
       for (const [i, w] of o.tour!.entries()) {
         if (walking.current !== my) return;
         setWalkNote(`Walking the route: ${i + 1}/${o.tour!.length} · ${w.label}`);
-        try { await lookAt(mp, { center: w.center, heightM: w.heightM, floorY: o.floorY, floor: o.floor, buffer: w.corners }); } catch (e) { setWalkNote("Move failed: " + (e as Error).message); return; }
+        try { await lookAt(mp, { center: w.center, heightM: w.heightM, sizeM: w.sizeM, floorY: o.floorY, floor: o.floor, buffer: w.room, avoid: o.tour!.map((x) => x.corners) }); } catch (e) { setWalkNote("Move failed: " + (e as Error).message); return; }
         await new Promise((r) => setTimeout(r, 2200));
       }
       if (walking.current === my) setWalkNote("Walk-through finished. Scan viewpoints are where the camera was captured, so they only approximate the route.");
@@ -179,38 +200,47 @@ export default function MatterportEmbed({ modelId, overlay, editVersion, onViewR
         if (!inside()) mp.Mode.moveTo(INSIDE).catch((e: Error) => setNote("Move failed: " + e.message));
         return;
       }
-      // Nearest viewpoint inside the matched floor region but OUTSIDE the clearance buffer, so the camera stands
-      // in the same room looking at the artwork rather than inside it or behind a wall.
-      const dist = (s: (typeof sweeps)[number]) => Math.hypot(s.position.x - o.center.x, s.position.z - o.center.z);
-      const at = (s: (typeof sweeps)[number]) => ({ x: s.position.x, z: s.position.z });
-      const inRoom = sweeps.filter((s) => pointInPolygon(at(s), o.floor) >= 0);
-      const clear = inRoom.filter((s) => pointInPolygon(at(s), o.buffer) < 0);
-      const pool = clear.length ? clear : inRoom.length ? inRoom : sweeps;
-      const s = [...pool].sort((a, b) => dist(a) - dist(b))[0];
-      if (!clear.length) setNote("No viewpoint outside the clearance zone in this room; showing the nearest one.");
-      const dx = o.center.x - s.position.x, dz = o.center.z - s.position.z;
-      const yaw = (Math.atan2(-dx, -dz) * 180) / Math.PI; // three.js camera looks down -Z
-      const pitch = -(Math.atan2(s.position.y - o.floorY - o.heightM / 2, Math.hypot(dx, dz)) * 180) / Math.PI;
-      const rotation = { x: pitch, y: yaw };
-      (async () => {
-        try {
-          // From dollhouse / floor plan, switch back to inside AT the chosen viewpoint first; a plain sweep move
-          // is not reliable outside the inside mode.
-          if (!inside()) await mp.Mode.moveTo(INSIDE, { sweep: s.sid, rotation, transition: mp.Mode.TransitionType?.FLY });
-          await mp.Sweep.moveTo(s.sid, { rotation, transition: mp.Sweep.Transition.FLY, transitionTime: 1500 });
-        } catch (e) {
-          // Already standing at that viewpoint after the mode switch is fine; anything else is reported.
-          if (!inside()) setNote("Move failed: " + (e as Error).message);
-          else mp.Camera.setRotation?.(rotation, { speed: 2 }).catch?.(() => {});
-        }
-      })();
+      const sizeM = Math.max(...o.artwork.map((p) => Math.hypot(p.x - o.center.x, p.z - o.center.z))) * 2;
+      lookAt(mp, { center: o.center, heightM: o.heightM, sizeM, floorY: o.floorY, floor: o.floor, buffer: o.buffer, avoid: o.group?.works.map((w) => w.corners) })
+        .then((ok) => { if (!ok) setNote("No viewpoint outside the viewing room in this room; showing the nearest one."); })
+        .catch((e: Error) => setNote("Move failed: " + e.message));
     }
   };
+
+  // Fly to the selected work. The first key is the initial selection, not a user pick, so it is skipped.
+  const lastFocus = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (lastFocus.current === undefined) { lastFocus.current = focusKey ?? null; return; }
+    if (!focusKey || focusKey === lastFocus.current || status.kind !== "playing") return;
+    lastFocus.current = focusKey;
+    const t = setTimeout(() => mode("inside"), 60); // let the overlay for the new selection land first
+    return () => clearTimeout(t);
+  }, [focusKey, status.kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#000", minWidth: 0 }}>
       <div style={{ flex: 1, position: "relative", minHeight: 0 }}>
         <div ref={host} style={{ position: "absolute", inset: 0 }} />
+        {onFloorClick && status.kind === "playing" && (
+          // Catch the click before Showcase does (a click there would walk the camera), then ask the SDK which
+          // world point is under that screen position.
+          <div className="place-catcher" role="button" tabIndex={0} aria-label="Click the floor to place the selected work"
+            onClick={async (e) => {
+              const mp = sdkRef.current, cb = floorClickRef.current;
+              if (!mp || !cb) return;
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              try {
+                const d = await mp.Renderer.getWorldPositionData({ x: e.clientX - r.left, y: e.clientY - r.top });
+                const y0 = overlayRef.current?.floorY ?? 0;
+                if (!d?.position) { setNote("Nothing there. Click on the floor."); return; }
+                if (Math.abs(d.position.y - y0) > 0.35) { setNote("That's a wall or an object. Click on the floor."); return; }
+                setNote(null);
+                cb({ x: d.position.x, z: d.position.z });
+              } catch (err) { setNote("Couldn't read that point: " + (err as Error).message); }
+            }}>
+            <span>Click the floor where the work should stand · Esc to cancel</span>
+          </div>
+        )}
         {status.kind !== "playing" && (
           <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#ddd", pointerEvents: "none", textAlign: "center", padding: 20 }}>
             {status.kind === "loading" ? <span><span className="spinner" /> Matterport: {status.step}…</span> : <span>Matterport scan unavailable: {status.reason}</span>}

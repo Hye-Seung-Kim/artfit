@@ -2,7 +2,7 @@
 
 **Find a space that fits your art, not just your budget.** HackPrinceton Fall 2026 · Business & Enterprise · CoStar · Amazon Practical AI
 
-ArtFit finds commercial spaces that are marketed for lease in a CoStar data-kit snapshot. It keeps three things separate: listing availability, physical vacancy, and furniture condition. It checks one floor-standing artwork and its walk-around clearance against geometry traced from Matterport scans. It also precomputes alternatives and produces a checklist of what still has to be verified.
+ArtFit finds commercial spaces that are marketed for lease in a CoStar data-kit snapshot. It keeps three things separate: listing availability, physical vacancy, and furniture condition. It plans floor-standing artworks against geometry traced from Matterport scans, in solo or group-show mode. A visible exhibition agent compares candidate layouts and drafts venue questions; the Workspace supports constrained editing, route previews, and PDF/PNG plan export. Results retain their draft and unconfirmed-condition status.
 
 > Current user journey: [Exhibition Planning User Flow](docs/USER_FLOW.md) — multi-work onboarding, CoStar candidate search, group Workspace, and implementation limits.
 
@@ -29,7 +29,7 @@ geometry/   pure TS: polygon ops, analytic circle distance, sampled scan, evalua
             clearance proposal (vitest, shared by server and browser worker)
 server/     Express. adapters/costarKit.ts (streamed JSONL + CSV, enum decoding, joins, idle signal),
             evidence/ (scoped ledger → condition labels), scenarios/ (authoritative annotation + scenario
-            validation), agent/ (exactly 4 tools + bound-template narration), data/annotations, data/evidence
+            validation), agent/ (group exhibition planning, separate single-work agent, allowlisted editing, report narration), data/annotations, data/evidence
 web/        Vite + React. Brief / Discover / Workspace, R3F planning view (Plan B), Matterport embed,
             scan Web Worker, annotation tool (Showcase SDK Pointer.intersection)
 docs/DECISIONS.md   gate outcomes, spike results, policies, remaining human steps
@@ -39,7 +39,9 @@ Routes: `POST /api/spaces/search` · `GET /api/spaces/:id` · `GET /api/spaces/:
 
 AI in the app: Workspace artwork editing (`POST /api/workspace/edit`). Claude (`claude-opus-5-5`) turns the artist's request ("move it left 30 cm", "lift it 1 m", "matte white") into an allowlisted set of edit ops. ArtFit converts units, validates, applies and re-checks the placement in code; Claude cannot edit boundaries, obstacles or evidence. Undo, redo and reset are deterministic. Set `LLM_PROVIDER=anthropic` and `LLM_API_KEY` in `.env`; without them the edit bar says Claude is not connected and the manual controls still work.
 
-Server-only (no UI): `POST /api/agent/run` lets Claude plan calls to the four search tools (`search_spaces`, `inspect_space`, `evaluate_placement`, `plan_alternatives`). All numbers, counts and verdicts come from deterministic code.
+Separate single-work search service: `POST /api/agent/run` lets Claude plan calls to the four search tools (`search_spaces`, `inspect_space`, `evaluate_placement`, `plan_alternatives`). All numbers, counts and verdicts come from deterministic code.
+
+Visible exhibition agent: `POST /api/agent/show` streams its work in Discover using `search_spaces`, `inspect_space`, `plan_group_layout`, and `draft_inquiry`. It tests the whole exhibition with the shared group planner and passes selected poses to Workspace. Owner inquiries are drafts; PDF/PNG export is not hosted sharing, project persistence, or automatic email delivery. See [the source-reviewed user flow](docs/USER_FLOW.md) for exact handoffs and remaining limits.
 
 ## Data layers that affect decisions
 
@@ -59,7 +61,7 @@ A pose is valid when the artwork rectangle lies inside the floor polygon (concav
 
 ## Limitations
 
-ArtFit uses a November 2026 CoStar data-kit snapshot, not live inventory. A marketed lease listing does not establish physical vacancy, unfurnished condition, a cleared installation region or short-term exhibition permission. Physical-condition claims require their own scoped, dated evidence, and unknowns and conflicts remain visible. Geometry is manually traced from Matterport scans, with reviewed furniture and uncertain objects included by default. A user-selected furniture-removal scenario is conditional: it does not establish removal permission or completion, and it does not edit furniture baked into the original scan. Traced geometry and calibration can have measurement and coverage limitations, and circular columns omit unmodeled capitals or flares. Search samples a grid and fixed orientations, so "best clearance" means best among tested placements, and a search failure is not proof of impossibility. Floor fit is distinct from local height, load-in, structural capacity, lease, code, safety and accessibility review. Property-level maxima and nominal door comparisons are context, not exact-suite certification. Asking rents keep their original units and are not short-term quotes. The long-idle signal combines time on market with matched tenancy records. Time on market comes from a possibly estimated `dateOnMarket` and is measured to the snapshot date. The signal ranks leads and does not establish vacancy. ArtFit models one floor-standing artwork; hanging, window-mounted and rooftop installations are not modeled. A front photo or a .glb model changes only how the work looks; checks still use its outer box. Confirm actual conditions, use permission, dates and cost before committing to a space.
+ArtFit uses a November 2026 CoStar data-kit snapshot, not live inventory. A marketed lease listing does not establish physical vacancy, unfurnished condition, a cleared installation region or short-term exhibition permission. Physical-condition claims require their own scoped, dated evidence, and unknowns and conflicts remain visible. Geometry is manually traced from Matterport scans, with reviewed furniture and uncertain objects included by default. A user-selected furniture-removal scenario is conditional: it does not establish removal permission or completion, and it does not edit furniture baked into the original scan. Traced geometry and calibration can have measurement and coverage limitations, and circular columns omit unmodeled capitals or flares. Search samples a grid and fixed orientations, so "best clearance" means best among tested placements, and a search failure is not proof of impossibility. Floor fit is distinct from local height, load-in, structural capacity, lease, code, safety and accessibility review. Property-level maxima and nominal door comparisons are context, not exact-suite certification. Asking rents keep their original units and are not short-term quotes. The long-idle signal combines time on market with matched tenancy records. Time on market comes from a possibly estimated `dateOnMarket` and is measured to the snapshot date. The signal ranks leads and does not establish vacancy. ArtFit models floor-standing artworks in solo and group-show modes; hanging, window-mounted and rooftop installations are not modeled. A front photo or a .glb model changes only how the work looks; checks still use its outer box. Confirm actual conditions, use permission, dates and cost before committing to a space.
 
 ## From the artist interview
 
@@ -81,6 +83,19 @@ The Workspace has a **Single work | Group show** switch. Group show plans one sp
 - **Suggested layouts:** randomized greedy search per priority (most room, follows the viewing order, fewest changes). These are suggestions for the chosen conditions, not an optimum. Locked works stay put. "The same show elsewhere" checks the other candidate space.
 - **Budget:** costs are split into quoted, estimated and unknown. Unknown costs are never counted as zero, currencies are not mixed, and the listing's asking rent is never treated as a short-term price. Moving works does not change cost.
 - **AI** (`POST /api/workspace/group-edit`): allowlisted operations only (lock, unlock, set order, rearrange, move, rotate, set viewing room, select, undo, redo). There is no resize or remove operation. Each request is one undoable step.
+
+## Plan report and contacts
+
+- **Share plan** (Workspace) opens a report that can be saved as a PDF or downloaded as a PNG plan. It includes:
+  - the layout drawn to scale, with the route, standing spots, doorways and a scale bar;
+  - a 3D-plan picture and a Matterport scan picture;
+  - an AI walk-through (`POST /api/report/narrate`) covering the route, crowd, atmosphere, each work and what to check, where any sentence with a number not in the layout facts is removed;
+  - the works table, space facts and contacts.
+- **Space info**: click a property name in Discover or the Workspace. It shows the listing broker, leasing company, manager and owner from the CoStar listing and property records, with mailto/tel links and an email prefilled with the agent's drafted inquiry. The hackathon kit anonymizes contact details.
+
+## AI evaluation
+
+`npm run eval -w server` sends 19 prompts to Claude through the same code paths the app uses and checks each answer: the demo script (★), multi-step requests, Korean, vague requests (must ask), and requests the AI must refuse (resize or drop a work, edit walls or columns, vacancy claims, prompt injection). `-- --only demo --repeat 3` checks consistency. It needs `LLM_*` and `COSTAR_KIT_DIR` in `.env` and exits non-zero on any failure.
 
 ## What's next
 

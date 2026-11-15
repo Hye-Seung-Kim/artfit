@@ -122,6 +122,9 @@ export interface SpaceCandidate {
   idleSignal: "strong" | "moderate" | "weak" | "unknown";
   idleNote: string | null;
   certifiedFreshDate: string | null;
+  /** Who to contact, from the listing/property records (anonymized in the hackathon kit). */
+  contacts: { name: string | null; company: string | null; role: string; email: string | null; phone: string | null }[];
+  brokerageCompany: string | null;
   listingStatusUpdatedDate: string | null;
   matterportModelIds: string[];
   matterportLinkLevel: LinkLevel;

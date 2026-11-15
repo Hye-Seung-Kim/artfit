@@ -142,6 +142,25 @@ export function idleSignalOf(sp: IdleInput, tenancies: TenancyIndexRec[] | undef
   };
 }
 
+/** Listing broker first, then leasing company, property manager and owner; one entry per person/company+role. */
+function contactsOf(l: any, enums: any) {
+  const role = (r: number | undefined) => decode(enums, "ContactRole", r) ?? "Contact";
+  const out: { name: string | null; company: string | null; role: string; email: string | null; phone: string | null }[] = [];
+  const seen = new Set<string>();
+  const order = ["ListingBroker", "PrimaryLeasingCompany", "LeasingCompany", "PropertyManager", "TrueOwner", "RecordedOwner"];
+  for (const c of [...(l.listingContacts ?? []), ...(l.propertyContacts ?? [])]) {
+    const r = role(c.contactRole);
+    if (!order.includes(r)) continue;
+    const name = [c.firstName, c.lastName].filter(Boolean).join(" ") || null;
+    const key = `${name}|${c.locationName}|${r}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const phone = c.phoneNumber ? String(c.phoneNumber).replace(/^(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3") : null;
+    out.push({ name, company: c.locationName ?? null, role: r.replace(/([a-z])([A-Z])/g, "$1 $2"), email: c.emailAddress ?? null, phone });
+  }
+  return out.sort((a, b) => order.indexOf(a.role.replace(/ /g, "")) - order.indexOf(b.role.replace(/ /g, "")));
+}
+
 export async function loadKit(dir: string, refDate: string): Promise<Kit> {
   const t0 = Date.now();
   if (!dir || !fs.existsSync(dir)) throw new KitError(`COSTAR_KIT_DIR does not exist: ${dir || "(unset)"}`);
@@ -294,6 +313,8 @@ export async function loadKit(dir: string, refDate: string): Promise<Kit> {
       floorLoadPsf: struct?.floorLoadPoundsPerSquareFoot ?? null,
       ...idle,
       certifiedFreshDate: l.certifiedFreshDate ?? null, listingStatusUpdatedDate: l.listingStatusUpdatedDate ?? null,
+      brokerageCompany: l.brokerageCompanyName ?? null,
+      contacts: contactsOf(l, enums),
       matterportModelIds: [...models].sort(),
       matterportLinkLevel: models.size ? "building" : "unknown", // provider association is property/listing level, never suite
       source: "CoStar data kit", dataMode: "kit_snapshot", snapshotLabel: "Nov 2026", loadedAt,

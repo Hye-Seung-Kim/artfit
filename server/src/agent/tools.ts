@@ -177,6 +177,7 @@ export function search_spaces(ctx: ToolCtx, briefIn: unknown) {
         cleared: r.conditions.clearedRegion.label, shortTerm: r.conditions.shortTermUse.label,
       },
       certifiedFreshDate: r.c.certifiedFreshDate,
+      contacts: r.c.contacts, brokerageCompany: r.c.brokerageCompany,
     })),
   };
 }

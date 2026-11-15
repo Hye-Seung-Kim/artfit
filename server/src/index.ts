@@ -6,6 +6,8 @@ import { TOOL_NAMES, factsFromPlan, narrate } from "./agent/narration.js";
 import { AGENT_MODEL, llmConfigured, runAgent } from "./agent/loop.js";
 import { interpretEdit } from "./agent/workspaceEdit.js";
 import { MARKETS } from "./adapters/costarKit.js";
+import { narrateReport } from "./agent/report.js";
+import { runShowAgent } from "./agent/showAgent.js";
 import { interpretGroupEdit } from "./agent/groupEdit.js";
 import { loadLedger, saveLedger } from "./evidence/ledger.js";
 import { loadAnnotation, saveAnnotation } from "./scenarios/store.js";
@@ -81,6 +83,18 @@ app.post("/api/agent/run", async (req, res) => {
   }
   res.end();
 });
+// Exhibition planning agent (group show): Claude plans tool use across spaces; streams NDJSON events.
+app.post("/api/agent/show", async (req, res) => {
+  let k: Kit;
+  try { k = needKit(); } catch (e) { res.status(503).json({ error: (e as Error).message }); return; }
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
+  res.flushHeaders();
+  const send = (ev: unknown) => res.write(JSON.stringify(ev) + "\n");
+  try { await runShowAgent(k, { kit: k, cache, requestId: reqId(req) }, req.body?.brief, send); }
+  catch (e) { send({ type: "error", message: (e as Error).message }); }
+  res.end();
+});
 // Workspace artwork editing (separate from the four-tool search agent): Claude → allowlisted edit ops only.
 // Per research market: what the snapshot holds (for the brief's first question). Counts are listing records.
 let marketCache: unknown = null;
@@ -93,6 +107,7 @@ app.get("/api/markets", handle(() => {
   });
   return marketCache;
 }));
+app.post("/api/report/narrate", handle((req) => narrateReport(req.body)));
 app.post("/api/workspace/edit", handle((req) => interpretEdit(needKit(), req.body)));
 app.post("/api/workspace/group-edit", handle((req) => interpretGroupEdit(needKit(), req.body)));
 app.get("/api/agent/status", (_req, res) => { res.json({ configured: llmConfigured(), model: AGENT_MODEL, tools: TOOL_NAMES }); });

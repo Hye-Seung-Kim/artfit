@@ -14,6 +14,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [spaceIds, setSpaceIds] = useState<string[]>([]);
+  const [agentLayouts, setAgentLayouts] = useState<Record<string, Record<string, import("@artfit/geometry").Pose | null>> | null>(null);
   const [health, setHealth] = useState<any>(null);
   // Re-check every 3 s until the API answers, so a server restart doesn't leave a stale error on screen.
   useEffect(() => {
@@ -48,11 +49,11 @@ export default function App() {
           <button className={screen === "discover" ? "on" : ""} aria-current={screen === "discover" ? "step" : undefined} disabled={!result} onClick={() => setScreen("discover")}><span className="step-number">02</span>Discover</button>
           <button className={screen === "workspace" ? "on" : ""} aria-current={screen === "workspace" ? "step" : undefined} disabled={!spaceIds.length} onClick={() => setScreen("workspace")}><span className="step-number">03</span>Workspace</button>
         </nav>
-        <div className="source-block">{health && !health.ok && <span className="source-error" role="alert">{health.kitError ?? "Source loading"}</span>}</div>
+        <div className="source-block">{health && !health.ok && <span className="source-error" role="alert">{health.kitError ?? "Source loading"}</span>}<div id="header-actions" className="header-actions" /></div>
       </header>
       {screen === "brief" && <Brief brief={brief} setBrief={setBrief} onSearch={search} busy={busy} error={error} />}
-      {screen === "discover" && result && <Discover result={result} brief={brief} briefChanged={searchedKey !== searchKey(brief)} onSearchAgain={search} searching={busy} onBack={() => setScreen("brief")} onOpen={(ids) => { setSpaceIds(ids); setScreen("workspace"); }} />}
-      {screen === "workspace" && spaceIds.length > 0 && <Workspace key={spaceIds.join("|")} spaceIds={spaceIds} brief={brief} setBrief={setBrief} onBack={() => setScreen("discover")} />}
+      {screen === "discover" && result && <Discover result={result} brief={brief} briefChanged={searchedKey !== searchKey(brief)} onSearchAgain={search} searching={busy} onBack={() => setScreen("brief")} onOpen={(ids, layouts) => { setSpaceIds(ids); setAgentLayouts(layouts ?? null); setScreen("workspace"); }} />}
+      {screen === "workspace" && spaceIds.length > 0 && <Workspace key={spaceIds.join("|") + (agentLayouts ? "|agent" : "")} spaceIds={spaceIds} initialLayouts={agentLayouts} brief={brief} setBrief={setBrief} onBack={() => setScreen("discover")} />}
       {screen !== "workspace" && <footer className="site-footer"><span className="footer-mark"><img className="footer-symbol" src="/brand/artfit-symbol.svg" alt="" /><img className="footer-wordmark" src="/brand/artfit-wordmark.svg" alt="ArtFit" /></span><div className="footer-copy"><span>Art, in the right place.</span><span>CoStar data kit · November 2026 snapshot</span><span>Preliminary spatial planning. Conditions need verification.</span></div></footer>}
     </div>
   );

@@ -1,369 +1,492 @@
-# ArtFit — Exhibition Planning User Flow
+# ArtFit — Project Overview and User Flow
 
-**Language:** English  
-**Source baseline:** Local working tree at `/Users/hyeseung/work/artfit`, reviewed on November 14, 2026. Includes uncommitted changes.  
-**Scope:** The implemented Brief → Discover → Workspace journey, including the group-show extension and clearly identified follow-up work.  
-**Verification:** Source review. This document does not claim a new browser walkthrough or a passing application test run.
+**Edition:** Final source-reviewed document, November 14, 2026.
 
-## 1. Product and user goal
+**Language:** English.
 
-ArtFit helps an artist or an exhibition organizer explore commercial-space listings and test an exhibition layout against traced spatial geometry.
+**Source:** The local working tree at `/Users/hyeseung/work/artfit`, including uncommitted changes.
 
-For a group show, the organizer creates **one exhibition brief containing several artists' works**, searches candidate spaces, and opens selected candidates in the Workspace. The organizer can inspect suggested layouts, adjust individual works, set a viewing order, and track known and missing costs.
+**Scope:** Implemented user journeys, their data handoffs, and explicit implementation limits. “Final” describes this document edition, not a claim that all proposed product features are complete.
 
-The product currently supports floor-standing works represented by their outer dimensions. A group show is a shared exhibition plan; it does not currently mean multiple people editing online together.
+**Verification:** Source review. Previous API/test observations are not presented as a fresh full browser, AI, or PDF-export rehearsal.
 
-**Core journey:**
+## 1. Project overview
 
-> Define one exhibition → add its artworks → search the CoStar snapshot → choose candidate spaces → inspect and revise the group layout → compare suggestions and unresolved conditions.
+ArtFit is an exhibition planner for installation artists and organizers preparing a show together. It connects commercial-space listing information with traced spatial geometry so an organizer can test multiple artists' works in one space, revise the visitor journey, and produce a plan for discussion with collaborators and a venue.
 
-CoStar supplies listing information. Traced geometry supplies the basis for placement calculations. AI translates editing requests into supported actions. These roles must remain distinct.
+The organizer creates **one exhibition brief with one or more artworks**. ArtFit searches a CoStar data-kit snapshot. Its visible exhibition agent can inspect candidates, test the whole show, compare supported results, and draft questions about unresolved venue conditions. The selected layout opens in a Workspace with manual and natural-language editing, route previews, and report export.
 
-## 2. Journey map
+The current installation model is floor-standing work, represented for calculation by its outer rectangular footprint and height. Photos and imported GLB models change its appearance; they do not replace the footprint calculation with mesh-level collision detection.
+
+“Group show” means several artists' works in one exhibition plan. Real-time editing by several signed-in users is not implemented.
+
+### 1.1 Main interaction
+
+> Define the exhibition → add its artworks → search real listing records → inspect and compare candidate spaces → open a proposed layout → lock, move, and rearrange works → preview the visitor route → export a plan and prepare venue questions.
+
+### 1.2 Responsibilities
+
+| Layer | Role |
+| --- | --- |
+| CoStar snapshot | Listing identity, availability information, area, asking-rate context, property/tenancy records, contacts, and model associations. |
+| Matterport and annotations | Visual context and the traced floor, entrance zones, obstacles, and any recorded local measurements. |
+| ArtFit geometry engine | Placement, collision, viewing-room distances, sampled layout suggestions, and route connectivity. |
+| Claude through Anthropic API | Tool selection and comparison for the exhibition agent; supported Workspace operations; report narrative. |
+| Organizer | Artwork dimensions, acceptable requirements, final layout choices, cost entries, and decisions about inquiries or exports. |
+
+## 2. End-to-end journey
 
 ```mermaid
 flowchart TD
-    A[Start an exhibition brief] --> B[Place and dates]
-    B --> C[Artworks: add one or more works]
-    C --> D[Default viewing room]
-    D --> E[Space types and total exhibition budget]
-    E --> F[Review the complete brief]
-    F --> G[Search the CoStar snapshot]
-    G --> H[Discover: inspect listing facts and evidence]
-    H --> I{Candidate resources}
-    I -->|Traced geometry| J[Workspace: single work or group show]
-    I -->|Tour without traced geometry| K[Workspace: tour only; no placement result]
-    I -->|No tour or traced geometry| L[Listing review only]
-    J --> M[Inspect automatic initial placement]
-    M --> N[Select, move, rotate, lock, or add works]
-    N --> O[Review conflicts, viewing route, costs, and alternatives]
-    O --> N
-    O --> P[Compare another opened candidate]
-    P --> O
-    H --> F
-    O --> H
+    A[Brief: place and dates] --> B[Add artworks and artists]
+    B --> C[Viewing room, space types, and total budget]
+    C --> D[Review and search the CoStar snapshot]
+    D --> E[Discover: listing candidates and evidence]
+    E --> F{Traced geometry available?}
+    F -->|Yes| G[Run exhibition agent or skip]
+    G --> H[Compare layouts, reasons, and inquiry drafts]
+    H --> I[Open selected space in Workspace]
+    F -->|Tour only| J[Inspect scan without placement checks]
+    F -->|Neither| K[Read listing and contact information]
+    I --> L[Edit works, locks, viewing room, and order]
+    L --> M[Review conflicts, route, alternatives, and costs]
+    M --> L
+    M --> N[Compare another opened candidate]
+    N --> M
+    M --> O[Share plan: report preview]
+    O --> P[Save as PDF or download plan PNG]
+    H --> Q[Read or copy owner inquiry]
+    Q --> R[Review contacts and optionally open email client]
+    O -->|Close report| M
+    E -->|Edit brief| D
 ```
 
-Returning to Discover after changing search-relevant dimensions shows a request to search again. Returning to another screen is not currently a durable save operation; see Section 10.
+The agent is optional. The featured traced-space section is revealed after its result, **Skip, show the spaces**, or a stale-brief state. The wider catalogue also remains available. A tour-only candidate does not gain placement capability merely because it opens in Workspace.
+
+The three main screens remain **01 Brief → 02 Discover → 03 Workspace**. Contacts and the plan report are additional surfaces, not extra onboarding screens.
 
 ## 3. Screen 01 — Brief
 
-### 3.1 Entry
+### 3.1 Entry and shared project
 
-The introduction offers **Begin your brief** and **Use example exhibition**. The example currently contains three works; it is sample input, not evidence about a venue.
+The introduction offers **Begin your brief** and **Use example exhibition**. The example contains three works and sample requirements; it is not a venue quote or evidence about physical conditions.
 
-The user completes six steps. One work and multiple works use the same onboarding flow.
+One organizer completes the same six steps for a solo work or a group show:
 
-| Step | User input or action | What carries forward |
+| Step | Input and interaction | Meaning |
 | --- | --- | --- |
-| 01 Place | Choose Houston or Los Angeles. | CoStar research market; not an exact municipal boundary. |
-| 02 Dates | Enter opening and closing dates. | Requested exhibition period. Closing cannot precede opening. |
-| 03 Artworks | Add, edit, or remove works. | Stable work IDs, titles, artist names, width, depth, and height. |
-| 04 Room to walk | Set preferred clearance and an optional minimum. | Default viewing room around each work. |
-| 05 Setting | Choose commercial-space types and enter an optional total exhibition budget. | Shared space preferences and total budget. |
-| 06 Review | Review common conditions and every artwork; return to edit a step. | The complete brief submitted to search. |
+| 01 Place | Select Houston or Los Angeles. Cards load listing, tour, and traced-plan counts through `GET /api/markets`; selecting a market advances to Dates. | Research markets include surrounding cities. They are not exact city boundaries. |
+| 02 Dates | Enter opening and closing dates; optional duration shortcuts update the closing date. | A requested period, not a reservation. Snapshot-to-exhibition timing is shown as context. |
+| 03 Artworks | Add, edit, or remove works. | Each work retains its own identity, artist, title, and real dimensions. |
+| 04 Room to walk | Set preferred clearance and an optional acceptable minimum. | A viewing-room preference, not an automatically assumed safety or legal standard. |
+| 05 Setting | Choose commercial-space types and an optional total exhibition budget. | Shared venue preferences and a total covering venue, transport, installation, and other entered costs. |
+| 06 Review | Inspect common inputs and each work; return to the relevant step to edit. | The complete brief submitted to search. |
 
-### 3.2 Artworks and “+ Add artwork”
+Current demo annotations are for Houston candidates. The market screen uses runtime counts and explains the tour-browsing limitation when Los Angeles has no traced plan. This is a data-coverage limitation, not a permanent prohibition on Los Angeles layouts.
 
-The Artworks step is an editable list, not a separate onboarding process for each artist.
+### 3.2 Artworks
 
-Each row shows a title, artist, and dimensions. **Edit** opens the row's fields. **+ Add artwork** creates another work and opens it for editing. **Remove** is available when more than one work remains.
+**+ Add artwork** creates another editable row. **Edit** opens its title, artist, width, depth, and height; **Done** closes the row. Onboarding allows **Remove** while at least one other work remains.
 
-Current behavior:
+- Width, depth, and height must be positive and are entered in meters.
+- Titles and artist names can be blank in onboarding; fallback labels are used later.
+- A new work receives an internal ID, editable dimensions of 1 × 1 × 1.5 m, and the preceding row's artist name. These defaults are not measurements.
+- The count of artists comes from distinct nonblank entered names, not user accounts.
+- Combined width × depth is a footprint reference. It does not include all spatial constraints and is not a group-fit result.
+- Files are optional. Artwork photos and GLB models can be attached later in Workspace, including separately for group works.
 
-- Width, depth, and height must be positive; dimensions are in meters.
-- Title and artist name may be left blank during onboarding. The interface uses fallback labels.
-- A newly added work starts with editable placeholder dimensions of 1 × 1 × 1.5 m and inherits the previous row's artist name. These defaults are not measured dimensions.
-- The counter reports the number of works and distinct nonblank artist names. It is not an account or team-membership count.
-- The combined footprint is the sum of width × depth. It is a reference value, not a required venue area or a group-fit verdict.
-- The search endpoint currently accepts 1–12 works. Onboarding does not currently stop the user from adding a thirteenth work; the server rejects that request.
+The search validator accepts 1–12 works. The add controls do not consistently enforce that limit before submission; see Section 13.
 
-An artwork can begin as a dimensioned box. A custom 3D asset is not required to search. The current asset-upload implementation is available in the single-work editor; individual assets for every group work are not yet wired through the group renderer.
+### 3.3 Shared and individual conditions
 
-### 3.3 Shared and per-work requirements
+Market, dates, space preferences, total budget, and the default viewing-room distance belong to the exhibition. Work identity, dimensions, required/optional status, and viewing-room exceptions belong to an individual work.
 
-Region, dates, space preferences, and total budget belong to the exhibition. Artist, title, real dimensions, required/optional status, and viewing-room exceptions belong to a work.
+Works start as required. A per-work clearance of `null` initially uses the shared preferred clearance. Workspace resolves that default into its work specification; it is not a continuously linked override after every subsequent brief edit.
 
-During onboarding, works default to required. Per-work viewing-room overrides and required/optional controls are available in the group Workspace. A null per-work clearance initially uses the brief's preferred clearance.
+The optional minimum supports compromise proposals in the existing **single-work** alternatives service. The group planner does not automatically relax every work's viewing room to that minimum.
 
-The optional minimum clearance is a user preference for possible compromises in the existing single-work alternatives flow. It is not a legal or safety minimum. The group planner does not automatically reduce every work's clearance to that minimum.
+### 3.4 Search submission
 
-### 3.4 Review and submission
+Review shows every artwork and the shared requirements. Submission calls `POST /api/spaces/search`. Success opens Discover. Search failure keeps the current answers and displays an error.
 
-Review lists the work count, artist count, each work's dimensions, dates, market, viewing-room preferences, space types, and total budget.
+The availability note distinguishes a marketed listing from physical vacancy, an unfurnished condition, or exhibition readiness.
 
-Submitting calls `POST /api/spaces/search` with the brief. A successful response opens Discover. A failed search keeps the brief and displays an error.
+## 4. Data meaning and preliminary candidate search
 
-The availability note explains that a marketed listing does not establish physical vacancy, an unfurnished condition, or readiness for an exhibition.
+### 4.1 Facts that remain separate
 
-## 4. Screen 02 — Discover
-
-### 4.1 What the search actually does
-
-Search reads the locally loaded **November 2026 CoStar data-kit snapshot**. It is not a live CoStar inventory request or a venue-booking service.
-
-The current candidate pipeline:
-
-1. Select eligible marketed lease-space records in the chosen research market.
-2. Apply supported space-use preferences. Unknown uses are counted separately for review rather than treated as confirmed matches.
-3. Exclude lease-pending records and records with a reported availability date after the exhibition opening.
-4. Retain relative or missing availability dates with their uncertainty visible. A missing date is not proof of availability.
-5. Apply an advertised-area screen for ranking. The UI derives the legacy `artwork` field from the work with the largest width × depth.
-6. Compare the tallest work with the property's listed ceiling height as ranking context.
-7. Rank by area-screen category, listed-height context, long-idle signal, and time on market, with a stable ID tie-breaker.
-
-The area and height screens do not remove candidates. The current area ranking puts the below-footprint category behind the other categories; it is not a complete ranking of group-layout quality. Property-level ceiling context can neither pass nor fail the local installation-height check.
-
-**Important:** the area screen uses the largest-footprint work and the shared clearance preference. It does not pack all works, combine every per-work viewing requirement, or calculate a visitor route. The tallest work may be a different work from the largest-footprint work.
-
-The budget is carried in the brief, but current search does not confirm that candidates fit the total exhibition budget. The snapshot does not supply a verified short-term exhibition quote.
-
-### 4.2 What users see
-
-The main summary uses readable descriptions such as **listings match your search** and **with linked 3D tours**. Internal stage names remain implementation details. Counts come from the search response, not fixed demo numbers.
-
-For a group show, an explanation states how many works are in the exhibition, that the listing screen uses the largest work, and that the full group is checked in the studio.
-
-The catalogue offers **All spaces**, **With a 3D tour**, and **Traced geometry**. Selection details explain exclusions, evidence gaps, and the snapshot date.
-
-### 4.3 Opening the Workspace
-
-| Candidate state | Available journey | What must not be implied |
+| Question | Evidence required | What the current listing/scan alone cannot prove |
 | --- | --- | --- |
-| Traced floor geometry exists | Open the placement studio. The featured section can open the traced candidates together. | Geometry exists does not mean it is reviewed or that the exhibition fits. |
-| Linked Matterport tour, no traced geometry | Open a tour-only Workspace. | No calculated placement or verified exact-unit result. |
-| Neither exists | Read listing facts in Discover. | No spatial placement capability for this candidate yet. |
+| Is it marketed as available? | Recorded listing status and availability information, with snapshot context. | Current physical vacancy, date-specific booking availability, or permission. |
+| Is it physically vacant? | Separate scoped, dated occupancy evidence. | No tenancy row or long time on market is not proof of vacancy. |
+| Is it furnished or unfurnished? | Reviewed furnishing observations or other supporting evidence. | A listing's suite category does not establish furnishing condition. |
+| Is the intended installation region cleared? | Evidence about that specific region and relevant time. | Vacancy, an unfurnished label, or a hypothetical furniture-removal scenario does not establish a cleared region. |
+| Does this layout meet the tested spatial conditions? | Correct suite-to-scan match, adequate geometry/scale/coverage review, and the appropriate calculation. | A linked tour or successful draft calculation is not an installation certificate. |
 
-Opening an individual traced card also includes other traced candidates from the current results for comparison. The clicked candidate opens first. A/B letters describe tab order, not permanent venue identities or quality rankings.
+The kit has no direct commercial-space vacancy, furniture, or cleared-state fields that establish those physical conditions. Missing values remain unknown. The strict verified-condition flags are currently forced to false by server validation.
 
-### 4.4 Four independent facts
+A Matterport association may be at building level. Exact-suite/region review is a separate application-level step. The existing geometry verification types and `spatiallyVerified` flag must not be confused with an agent's **Recommended**, **Possible**, or **Not recommended** ranking.
 
-| Fact | Supporting basis | Honest interpretation |
+### 4.2 What search does
+
+The application reads the local **November 2026 CoStar data-kit snapshot**, not live CoStar inventory. Runtime counts describe space/listing records, not independently confirmed unique vacant venues.
+
+The search:
+
+1. Normalizes listing, nested-space, property, tenancy, model-association, and available contact data.
+2. Selects eligible marketed records in the chosen research market.
+3. Applies space-use preferences, excludes lease-pending records, and excludes explicit availability dates after the requested opening.
+4. Keeps relative or missing dates visible as uncertain. The opening-date comparison does not confirm availability throughout the closing date or installation period.
+5. Uses the largest-footprint work and shared clearance for an advertised-area screen.
+6. Uses the tallest work for property-level listed-ceiling context.
+7. Orders candidates using the area category, height context, long-idle signal, time on market, and a stable ID tie-breaker.
+
+Area and height context affect ordering, not exclusion. Rounded advertised area is neither proof of fit nor proof of impossibility. Largest footprint and tallest height may belong to different works. Per-work viewing rooms, all bodies together, and routes require the group calculation later.
+
+The total budget is carried through the brief but is not a verified cost filter. Asking rents retain their rate bases and must not be presented as short-term exhibition quotes.
+
+## 5. Screen 02 — Discover and the exhibition agent
+
+### 5.1 Catalogue
+
+Discover shows readable runtime summaries, the exhibition's work count, the largest-work screening explanation, and current condition/evidence labels. **How these spaces were selected** exposes the filtering details rather than placing internal stage letters in the main summary.
+
+The wider catalogue offers **All spaces**, **With a 3D tour**, and **Traced geometry**, with incremental loading. Clicking a space name opens its information/contact dialog.
+
+### 5.2 Visible group-show planning
+
+When traced candidates exist and the brief is not stale, **Find the best space** starts `POST /api/agent/show`. A streamed response displays planning notes, tool activity, timing, results, and errors. The user can inspect completed steps or skip the agent.
+
+The visible exhibition agent has its own four tools:
+
+| Tool | Current responsibility |
+| --- | --- |
+| `search_spaces` | Search using the validated exhibition brief and return candidate, coverage, and work information. |
+| `inspect_space` | Read listing facts, condition labels, geometry/matching status, height context, and missing checks. |
+| `plan_group_layout` | Test all works together in one traced space using a room-first or route-first strategy. Return placements, required-work counts, spare room, route, issues, visitor estimates, and height facts. |
+| `draft_inquiry` | Render questions selected from supported topics using this exhibition's facts and unresolved conditions. |
+
+The agent is instructed to search, inspect traced candidates, try room-first layouts, retry a different strategy when useful, draft relevant questions, and return a ranking. The tool loop is bounded at 14 model turns; partial results or failures do not establish that every possible candidate or arrangement was evaluated.
+
+The validated brief supplies works, sizes, viewing requirements, market, and dates. Group calculations preserve work dimensions and retain unplaced works as reported items. Tool output, not free-form model text, supplies numeric results.
+
+### 5.3 Recommendation and verification
+
+The model returns structured space IDs, verdicts, and allowed reason codes. The server renders supported reasons from the collected tool results and records rejected reasons. The selected layout for a ranked space is attached from stored computed layouts; it is not a set of coordinates invented in the final narrative.
+
+Cards can show **Recommended**, **Possible**, or **Not recommended**, reasons, the returned layout preview, **Read the inquiry**, and **Copy owner inquiry**. These verdicts compare tested planning options. They do not confirm vacancy, local ceiling clearance, legal capacity, price, or permission.
+
+The current recommendation guard downgrades a recommended space when its stored best layout misses required works. It is not a complete gate over every issue, unknown route, local-height condition, and review flag. “Fact-checked” here means specific structured checks; it is not universal verification of the recommendation.
+
+Without AI configuration, tools run in a fixed order and the response is labeled deterministic. Model interruption, an unusable final response, or the turn limit can also produce a deterministic ranking from results already gathered. That is distinct from a completed autonomous model run.
+
+### 5.4 Open a candidate
+
+| Resource state | Available action and boundary |
+| --- | --- |
+| Traced geometry | Open Workspace with the exhibition and, if available, agent-returned poses. Draft/review status remains visible. |
+| Linked tour without traced geometry | Open a tour-only Workspace; no placement verdict. The tour may show the building rather than the exact unit. |
+| Neither | Review listing/contact information; no spatial calculation yet. |
+
+Opening a traced card places that candidate first and includes other traced candidates from the results for comparison. The main section can open all traced candidates together. A/B letters describe tab order, not fixed venue identities or quality.
+
+The agent's returned poses are passed through `agentLayoutsOf()` and application state to Workspace. **The current handoff carries poses, not an entire saved exhibition document:** agent-selected visiting order, narrative, inquiries, costs, and revision provenance are not all transferred with those poses. Workspace can recompute its suggested route.
+
+## 6. Screen 03 — Workspace
+
+### 6.1 Arrival and planning modes
+
+Workspace receives the brief, opened candidate IDs, and optional initial agent layouts. It loads candidate inspection and annotation data.
+
+- Multiple incoming works select **Group show**; one selects **Single work**.
+- Agent poses initialize the per-space group layout for matching work IDs, with no imported locks.
+- With geometry available, the automatic-placement helper attempts unplaced works. Existing placed works remain fixed for that attempt. Failed works stay listed as unplaced.
+- Switching candidate tabs within the mounted Workspace keeps separate poses and locks for each candidate. Work specifications, viewing order, and the cost list are shared.
+- A linked scan without traced geometry opens as a tour-only view and does not enable a placement result.
+
+The single-work and group editors remain separate state paths. Switching modes is not a guarantee that every aspect of one editor's state is synchronized with the other.
+
+### 6.2 Artworks panel
+
+**Artworks** is the single panel name. The flat list shows title, artist, real dimensions, lock state, optional state, and unplaced status, with artist colors for recognition.
+
+Selecting a group work exposes its dimensions, per-work viewing room, **Must be in the show**, appearance upload, movement/rotation controls, and **Lock position**. Explicit removal requires confirmation and removes that work's poses, locks, order entry, and linked cost items.
+
+**+ Add artwork** also works in Workspace. Its current add form requires title and artist, unlike onboarding's optional names. New works are considered by the automatic-placement helper without automatically moving existing placed works.
+
+Users may edit real dimensions. Group AI and automatic planning do not resize or delete a work to make a result succeed. Marking a work optional permits a suggestion to leave it unplaced; it does not remove it from the exhibition.
+
+### 6.3 Views and direct manipulation
+
+The view labels are **3D plan**, **Compare views**, and **Scan**.
+
+- The plan reconstructs traced geometry and displays artwork geometry, viewing zones, and the route.
+- The Matterport integration overlays planned objects in the original scan. It does not rebuild the baked room or prove present-day conditions.
+- Works can be dragged in the planning view, subject to lock handling. Resulting conflicts remain visible; a manual move is not automatically guaranteed valid.
+- The in-view **Move** pad can select/cycle works, move relative to the current view by 10 or 50 cm, rotate by 15°, and lock/unlock group works. Arrow keys and bracket rotation work while focus is in the pad.
+- **Click to place** uses an available scan intersection; in plan mode the pad instead directs users to dragging. Currently the pad disables movement/placement for unplaced or locked works, so it is not a general manual placement path for every unplaced work.
+- Explicit group selections can focus the scan camera near the selected work. Scan views are kept mounted for opened candidates during the Workspace session.
+
+Desktop panels and the AI dock reserve layout space around/below the viewer. Panel buttons remain in the top toolbar; panel arrows also close them. The AI input can collapse without discarding its draft. The Move pad is still a floating control inside the viewer. Panel drag resizing is not implemented.
+
+At narrower widths, the dock and panels flow below the fixed-height viewer. Closed panels remain closed; this is not a separate saved mobile layout.
+
+### 6.4 Photos and GLB models
+
+Each selected group work can have a front photo or a GLB model, and both renderers receive the corresponding appearance data. Drag/drop targets the selected group work or the current fallback work identified by the interface.
+
+A photo is applied to the box face. A GLB replaces the display geometry and is scaled to the work's dimensions; the underlying checks still use the outer box. Single-work importing additionally offers model-dimension/proportion handling. Appearance import does not establish measured scale or installation suitability.
+
+Group appearance data is held separately from the group document's Undo/Redo history. Do not promise that Undo restores imported files or that assets survive navigation/reload. Image-to-3D generation is not implemented.
+
+### 6.5 Layout panel
+
+The group panel keeps **Layout** as its title. The current placement status, count placed, **Review pending**, actual conflicts, and relevant unplaced-work messages remain visible.
+
+The main interaction is **Route**, its suggested/custom order, and **Walk route**. Users can reorder works or choose **Reset order** to return to the computed suggestion.
+
+Secondary information uses disclosures: **By artist**, **Layout options**, **Budget**, and **Visitor estimate**. A collapsed disclosure does not convert unknown evidence into a confirmed result.
+
+## 7. Group placement, routes, and alternatives
+
+### 7.1 Placement calculation
+
+Each placed rectangle must remain inside the floor and avoid active blockers and other work bodies. Viewing zones may overlap one another, but another work's body must not occupy a work's required viewing room. Required works without a pose are reported.
+
+The default group suggestion search uses a 0.3 m grid at 0° and 90°, with seeded randomized greedy restarts. It offers tested suggestions, not a guaranteed globally optimal packing. Failure to find a layout is not proof of impossibility.
+
+The separate single-work engine samples a 0.10 m grid, normally at 0°/90°, with an optional four-orientation setting. Display rounding and sampled-clearance rules must not be confused with group-search settings or measurement accuracy.
+
+The current user scenario is **as scanned**. Annotation categories distinguish permanent obstacles, reviewed movable furniture, and uncertain objects. All applicable traced blockers remain included; hypothetical furniture removal is not enabled in the normal UI. Removing a planning blocker would not establish actual removal permission/completion or edit the scan mesh.
+
+### 7.2 Route and playback
+
+The route uses a 0.2 m walkable grid, a 0.25 m person-radius assumption, artwork bodies, and annotated blockers. Entrance zones block artworks but allow walking. The route starts near the first traced entrance, visits computed standing spots, and returns to the same entrance; it does not validate a distinct exit or a load-in path.
+
+Without a user-set order, the algorithm compares permutations for up to seven remaining visitable works using grid-path distances; above that it uses a nearest-next heuristic. The result concerns the selected standing points and grid model, not a globally optimal real visitor experience. A full user order is respected; unset remaining works can be appended by the route logic.
+
+Missing/unconnected entrances and unreachable viewing spots are reported. **Walk route** animates a route preview in the plan and uses available captured viewpoints in the scan, which only approximate continuous travel.
+
+**Known limit:** when no route is available, per-work `reachable` may be `null`. `evaluateGroup().ok` currently rejects explicit false reachability but accepts null. Therefore no placement conflicts is not proof that route connectivity was confirmed. No visitor, fire-safety, accessibility, or structural approval follows from this preview.
+
+### 7.3 Suggested and alternative layouts
+
+Workspace suggestions can prioritize **Most room around each work**, **Follows your viewing order**, or **Fewest changes to the current layout** when applicable. Cards identify required/total placements, spare room, route length when available, locked/moved works, issues, and unplaced works.
+
+**Use this layout** is one undoable document change. A changed group-document version makes existing suggestion cards stale and disables applying them until regenerated. This invalidation is broad; even some non-spatial document changes can mark suggestions stale.
+
+**Other spaces** performs a fresh check with the same work specifications and current planning-order preference, without current-space poses or locks. Its current output is a temporary summary, not a saved alternate layout, a fresh agent ranking, or a venue-cost comparison.
+
+## 8. AI editing and the separate AI services
+
+The primary entry is the brief, not a required homepage chat. AI has distinct roles; the tool names and capabilities must not be combined into one fictional agent.
+
+| Service | Endpoint | Implemented scope |
 | --- | --- | --- |
-| Marketed listing availability | Listing status and recorded availability information. | Offered in the snapshot; not confirmation of current physical conditions or booking permission. |
-| Physical vacancy | Separate scoped, dated evidence. | Unknown unless supported; no tenant record is not vacancy evidence. |
-| Furnished, unfurnished, or cleared condition | Separate reviewed observations or evidence. | A visually open scan does not establish the current state. |
-| Spatial suitability | Correct unit-to-scan match, geometry review, scale/coverage checks, and the relevant calculation. | Separate from vacancy, furnishings, cost, and permission. |
+| Visible exhibition agent | `POST /api/agent/show` | `search_spaces`, `inspect_space`, `plan_group_layout`, `draft_inquiry`; whole-show candidate planning and comparison. |
+| Group Workspace editor | `POST /api/workspace/group-edit` | `lock`, `unlock`, `set_order`, `rearrange`, `move`, `rotate`, `set_clearance`, `select`, `undo`, `redo`. |
+| Single-work Workspace editor | `POST /api/workspace/edit` | Supported single-work pose, dimensions, elevation, finish, and history operations. |
+| Existing single-work search agent | `POST /api/agent/run` | `search_spaces`, `inspect_space`, `evaluate_placement`, `plan_alternatives`; not the visible group-show planner. |
+| Existing single-work alternatives | `POST /api/agent/plan` | Other space with the same requirements versus acceptable clearance adjustment in the same space. |
+| Report narrative | `POST /api/report/narrate` | English narrative from the current report facts, with numeric-token filtering. |
 
-The kit has no direct commercial-suite vacancy, furnishing, or cleared-state fields used to prove those conditions. A building-level Matterport association does not establish an exact-suite match. Strict verified-condition filters remain disabled in the current server validation.
+Example group instruction:
 
-## 5. Screen 03 — Workspace
+> Keep Work 1 where it is and rearrange the rest so visitors see Work 3 first.
 
-### 5.1 Arrival and mode
+The model interprets supported operations; ArtFit applies them and recomputes the result. One applied group request is one undoable change. Group AI cannot resize/delete works, elevate them, alter finishes, change walls, rewrite evidence, or confirm costs/permission. Vague requests can prompt clarification; unsupported requests can be refused.
 
-The Workspace receives the brief and opened candidate IDs. It loads listing inspection data and traced geometry for each candidate.
+Locked works cannot be moved by a group move/rotate command without unlocking. AI rearrangement refuses a result that misses required works; an individual manual/AI movement can still create a visible conflict. Replies are skipped when the active space or document version changed while the request was in flight.
 
-- More than one work in the incoming brief opens **Group show** automatically.
-- A one-work brief opens **Single work**.
-- A mode switch remains available. The single-work editor is a separate editing path; it does not show the complete group calculation.
-- Without traced geometry, a linked tour is view-only for planning purposes. Missing geometry never becomes a successful placement result.
+The dock keeps connection/error/clarification status and the current result visible. Examples and history are expandable. If AI is not configured or unavailable, manual planning remains available. Elevated single-work previews are separate from floor-standing placement and do not establish suspension, fixing, load, or obstacle-height clearance.
 
-In group mode, ArtFit attempts an initial placement when geometry is available. On later additions, it tries to place the new unplaced works while keeping already placed works fixed for that automatic attempt. It does not resize works to make them fit. Unplaced works remain in the list and are reported.
+## 9. Costs and visitor estimates
 
-### 5.2 Left panel — Works
+### 9.1 Budget
 
-The works list identifies each work by title and artist and shows its real dimensions, optional status, lock status, and whether it is placed. Artist colors help distinguish works; the current list is flat rather than organized into collapsible artist sections.
+The budget is the exhibition total. Group Workspace begins with an unknown short-term venue-rental item; users can add transport, installation, equipment, and other costs.
 
-Selecting a work exposes:
+Quoted amounts, user estimates, and unknown items are distinguished. Currency mismatch prevents a reliable combined budget conclusion; there is no exchange-rate service. User-selected “Quoted” status is not independent verification that a venue supplied a quote.
 
-- Real dimensions, which only the user edits in group mode.
-- Per-work viewing-room distance and **Must be in the show**.
-- Camera-relative 10 cm nudges and 15° rotation controls for placed works.
-- **Lock position**, scoped to the current candidate space.
-- Explicit removal with confirmation.
+Current layout selection does not optimize cost, and moving a work does not change entered costs. The cost list is shared across candidate spaces rather than storing separate dated quotes for each venue. Annual per-square-foot asking rent must not become a two-week rental quote. The current report does not export the complete group cost ledger.
 
-**Add a work** is also available here. Unlike onboarding, the current Workspace add form requires a title and artist name. Deleting a work removes its associated poses, locks, order entry, and linked cost items from the group document.
+### 9.2 Visitor estimate
 
-### 5.3 Center — Spatial views
+The visitor surface estimates viewing/standing attendance from the draft floor, work/blocker areas, doorway assumptions, and configured area/width factors. It also shows per-work figures where available. Doorways are not verified exits and shared viewing zones do not establish independent simultaneous capacities.
 
-Three modes are available: **3D planning view**, **Side by side**, and **Original Matterport scan**.
+These are planning estimates, not certified occupancy limits. They are available in Workspace, the group-agent tool output, and the report. They must not be presented as permission to admit a stated number of people or as a substitute for venue-specific review.
 
-The planning view reconstructs traced geometry. Group works and the calculated route can also be overlaid in the Matterport scene when the integration is available. The baked scan itself is not rewritten.
+## 10. Share plan — report and exports
 
-The current scenario is **as scanned**. Permanent obstacles, movable furniture, and uncertain objects present in the annotations remain blockers. The app must not silently remove a scanned object or infer that a venue is cleared. Missing or partial obstacle annotation remains an evidence limitation.
+### 10.1 Open the report
 
-Switching candidate tabs during the same mounted Workspace keeps separate poses and locks for each space. Works and their dimensions are shared across those candidates. The viewing order is shared too.
+Workspace's header action **Share plan** prepares a report when a candidate and traced annotation are available. It captures the current active-space works/poses and the applicable viewing order, computes report figures in the browser, attempts scene images, and opens **Plan report**.
 
-### 5.4 Right panel — Review and decide
+The report includes:
 
-The group review panel currently presents:
+- Exhibition dates, selected venue information, and the work/artist count.
+- A plan drawing from the annotation coordinates, with works, viewing zones, standing spots, route, doorways, labels, and a scale bar.
+- A 3D planning image and a scan image when capture succeeds.
+- An optional AI headline and visit narrative covering route, visitors, atmosphere, works, and unresolved checks.
+- A work table, dimensions, viewing room/spare figures, reported issues, space context, and available contacts.
+- A footer identifying the snapshot, draft geometry, unconfirmed conditions, and planning-only scope.
 
-1. Placement issues and the number of works placed.
-2. A per-artist summary of works with viewing room.
-3. Viewing route and controls to move works earlier or later in the order.
-4. Suggested layouts and their tradeoffs.
-5. **The same show elsewhere** checks for other opened candidates.
-6. Quoted, estimated, and unknown costs against the total budget.
+The report is a view of the active candidate at the time it opens, not an export of all candidate alternatives or the full group project's editable state. Its scale reflects the supplied coordinates and inherits their calibration/review limits.
 
-The current headline remains provisional: a draft-layout result is not a verified venue recommendation. The group panel currently labels geometry as draft/review pending rather than deriving a complete evidence-based group verdict.
+### 10.2 Image and narrative generation
 
-## 6. What group placement and route calculations mean
+`openReport()` requests a Matterport screenshot only if **Scan** or **Compare views** is currently active and a capture function is available. It retries blank/failed frames briefly and can omit the scan image. It then briefly opens the plan to capture it and returns to the previous view. A missing image is not replaced with a fabricated one.
 
-### 6.1 Placement checks
+The browser sends its computed report facts to `/api/report/narrate`. Claude's text is checked against numeric tokens appearing in those facts, including supported rounded forms; sentences containing other numeric tokens are dropped. This does not verify what each number refers to, independently recompute the figures on the server, or establish the truth of every qualitative sentence.
 
-The engine checks each placed work against the floor boundary, active blockers, and the bodies of the other placed works. It reports required works without a pose.
+The drawing and figures remain available if narrative generation is pending, unavailable, or fails. The interface can display **Ready to share** even after an unavailable/error state; that label does not prove the narrative succeeded. Wait for narrative completion before printing when it is part of the intended deliverable.
 
-Viewing zones may overlap one another. Another artwork's body must not occupy the requested viewing space. Shared viewing space avoids counting every surrounding buffer as an exclusive area.
+### 10.3 Export behavior
 
-The group suggestion engine currently samples a 0.3 m placement grid at 0° and 90° and uses randomized greedy restarts with a seeded generator. These settings differ from the single-work search. A layout is a suggestion among tested arrangements, not a mathematical global optimum. Failure to find one is not proof that none exists.
+| Action | Actual result |
+| --- | --- |
+| **Save as PDF** | Calls `window.print()` with report print styling. The user chooses the browser/OS PDF destination and save options. |
+| **Download plan (PNG)** | Rasterizes the plan SVG and downloads a PNG of the drawing, not the entire report. |
+| **Close** or Escape | Returns to the mounted Workspace. |
 
-### 6.2 Route preview
+**Share plan does not create a hosted sharing URL, save an editable project, synchronize collaborators, attach a file to an email, or send the report.** Export can happen before every physical check is complete, so limitations must remain in the output.
 
-The route uses a 0.2 m grid, annotated blockers, artwork footprints, and a 0.25 m body-radius assumption. It starts near the first traced entrance zone, visits computed standing points in the requested order, and returns to that entrance. It does not discover or validate a separate exit.
+## 11. Venue contacts and inquiry drafts
 
-Entrance zones block artwork placement but are traversable for route construction. Without a traced or connected entrance, the route is unavailable and an explanation is returned.
+Clicking a property name in Discover or the Workspace opens **Space info**, with available listing/property contacts, roles, brokerage context, listing facts, and email/phone links. Contact data is normalized from supplied records; absent contacts are not invented.
 
-The result is a connectivity preview. It does not establish crowd capacity, accessibility compliance, egress compliance, or load-in feasibility.
+Discover's agent-ranked card can expose **Read the inquiry** and **Copy owner inquiry**. When that card opens Space info with the inquiry, its email link can prefill the draft in the user's email client. Workspace's current title dialog receives listing/contact facts without that agent inquiry, so it offers a generic short-term-exhibition email instead.
 
-**Current implementation caveat:** when no route can be computed, per-work reachability can be `null`. `evaluateGroup().ok` accepts reachability that is not explicitly false. Therefore an otherwise conflict-free result can coexist with an unknown route. The present success copy must not be interpreted as proof that every work is reachable; tightening this behavior is follow-up work.
+The agent's inquiry covers selected unresolved topics, such as a short-term quote, current/date-specific vacancy and furnishings, local clear height, fixing permission, load-in route, exits/capacity, floor/light, and shared use. Drafting questions does not mean answers have been obtained.
 
-### 6.3 Layout alternatives
+The hackathon kit uses anonymized placeholder names, email addresses, and phone numbers. Contacts shown in the report are planning/demo data. Email/phone links hand off to external software; ArtFit does not send a message, validate a lead, receive consent, or book a venue automatically.
 
-The group planner can suggest:
+## 12. Data handoff, revisions, and persistence
 
-- **Most room around each work**.
-- **Follows your viewing order**.
-- **Fewest changes to the current layout**, when a movable current layout exists.
+These contracts are internal ArtFit structures, not invented provider API fields.
 
-Cards show required/total placement counts, spare room, route length when available, changes, and works that could not be placed. Optional works can remain unplaced; they are not deleted from the exhibition. An incomplete suggestion must remain visibly incomplete.
-
-**Use this layout** applies a suggestion as one undoable change. Editing the group document marks existing suggestion cards stale and disables applying them until suggestions are regenerated.
-
-**The same show elsewhere** performs a fresh group search with the same work specifications and viewing order. It ignores current-space poses and locks. It currently returns a summary; it does not save that tested alternative as the other space's layout or calculate a venue-specific budget comparison.
-
-The existing single-work alternative service is separate: it compares another space at the same requirement with the original space at a reduced preferred clearance, only when the user specified an acceptable minimum. It must not be presented as a group-layout solver.
-
-## 7. AI inside the Workspace
-
-The primary journey begins with the brief. Workspace AI helps edit the exhibition after candidate selection; it does not need to lead the homepage experience.
-
-| Context | Supported behavior | Boundary |
-| --- | --- | --- |
-| Group show | Lock/unlock works, change order, request rearrangement, move, rotate, change viewing room, select, undo, redo. | No group resize, deletion, elevation, or material operation. |
-| Single work | Supported position, rotation, size, elevation, and finish edits. | A separate editor; elevated previews do not certify suspension or support. |
-| Search agent service | `search_spaces`, `inspect_space`, `evaluate_placement`, `plan_alternatives`. | A separate four-tool service, not the group editor or a group optimization engine. |
-
-Example group requests:
-
-> “Lock Work 1 and rearrange the rest.”  
-> “Show Work 2 first, then Work 1.”  
-> “Move Work 3 left 30 cm.”
-
-Claude returns supported structured operations. ArtFit resolves units, preserves locks and dimensions, applies operations in code, and re-evaluates the group. Individual moves can reveal conflicts; applying a command is not a guarantee that it creates a valid layout.
-
-An unsupported or ambiguous request produces an explanation or clarification instead of an invented operation. Replies are skipped if the active space or group version changed while AI was working. An applied request is one undoable step. The current AI rearrange path rejects a suggestion that cannot place every required work.
-
-If AI is unavailable, manual panels and layout suggestions remain usable. AI cannot change listing facts, evidence, floor boundaries, or permanent obstacles.
-
-## 8. Budget behavior
-
-The brief's amount is the **total exhibition budget**, including venue, transport, installation, and other entered costs. Group Workspace starts with an unknown short-term venue-rental cost; it does not import an invented quote from asking rent.
-
-Users add costs, enter amounts, and label them **Quoted**, **My estimate**, or **Unknown**. These are user-entered statuses, not independently authenticated quotes.
-
-- Quoted amounts and estimates are reported separately.
-- Unknown items prevent a complete within-budget conclusion; unknown is not treated as a confirmed zero.
-- Quoted costs alone above budget trigger an over-budget result.
-- A complete within-budget result requires all entered items to be quoted in a consistent currency.
-- Currency mismatch produces an unknown result. It is not an exchange-rate conversion.
-- An annual per-square-foot asking rate is not a short-term venue price.
-
-Current placement suggestions do not use cost as an optimization objective. Moving works does not change entered costs. The cost list is shared across opened spaces, not a set of separate venue-specific quotes. The product can currently support planning **with budget visibility**, not promise an optimized layout **within a verified budget**.
-
-## 9. Data handoff and application state
-
-These are existing ArtFit internal contracts and routes, not invented CoStar or Matterport fields.
-
-| Boundary | Current data and behavior |
+| Boundary | Current implementation |
 | --- | --- |
 | Brief → search | `ExhibitionBrief` includes common requirements, optional `works[]`, and legacy `artwork`. `withWorks()` derives `artwork` from the largest-footprint work. |
 | Per-work input | `BriefWork`: `id`, `title`, `artist`, `widthM`, `depthM`, `heightM`, `clearanceM`, `required`. |
-| Search → Discover | Search response contains normalized candidates, evidence labels, runtime funnel counts, and area/height context. |
-| Discover → Workspace | The application retains the brief and supplies selected `spaceIds`; inspection and geometry are fetched for each candidate. |
-| Group editing | `GroupDoc` contains shared works, viewing order, costs, budget/currency, and `bySpace` poses/locks. |
-| AI group editing | `POST /api/workspace/group-edit` interprets an instruction; the browser applies the operations to the current group document. |
-| Group → Brief | Group work-list edits are copied back through `withWorks()` when the group synchronization effect runs. This is not persistence of the entire group document. |
+| Search → Discover | Normalized `CandidateCard` records, evidence labels, area/height context, and runtime counts. |
+| Agent → cards | `ShowFinal` ranking, computed layouts, supported reason text, inquiry drafts, rejected reasons, and mode. |
+| Discover → Workspace | Candidate IDs and optional `AgentLayouts`, which contain per-space work poses. |
+| Workspace editing | `GroupDoc`: shared work specifications, `order`/`orderSet`, costs, budget/currency, and per-space poses/locks, with component-state history. |
+| Workspace → Brief | Group work specifications are copied back when synchronization runs. The complete group document is not synchronized. |
+| Workspace → report | `ReportInput`: annotation, current works/poses/order, selected-space facts/contacts, brief, and available image captures. The group cost ledger is not included. |
 
-The existing stale-search fingerprint tracks market, dates, space-use preferences, legacy artwork, preferred/minimum clearance, and work dimensions. It does not track every group property or budget. This is a specific invalidation mechanism, not a complete project-revision system.
+The search fingerprint includes market, dates, space types, legacy artwork, shared clearance, and work dimensions. A mismatch produces **Search again**. It does not cover every work property, budget change, agent result, contact, or evidence revision, and is not a complete project-version system.
 
-The normal screen flow is managed by application state. It is not a set of durable saved-project URLs. `/annotate/:spaceId` is a separate internal review route.
+Conditional screen rendering unmounts Discover or Workspace when leaving them. Brief/search results and the application's last agent-pose handoff can remain in app memory, but current agent logs, edited poses, locks, route order, costs, assets, and Undo history are not a durable saved project. Re-entering Workspace can seed it again from original agent poses rather than restore later edits. Reloading or copying the URL is not project restoration.
 
-## 10. Current gaps and required follow-up
+Group assets are outside group history. Workspace budget/cost/order edits are not all written back to the brief. Candidate-plan handoff does not carry an annotation/evidence fingerprint or full visit-order state, and temporary “Other spaces” summaries are not a complete invalidated comparison cache.
 
-The items below are deliberately separated from the implemented flow. They should not be demonstrated as finished behavior.
+## 13. Implementation limits and follow-up
 
-| Area | Current behavior or limitation | Follow-up requirement |
+The following remain product limits or engineering follow-up. They are not missing text to be presented as shipped features.
+
+| Area | Source-reviewed limitation | Required next step |
 | --- | --- | --- |
-| Route certainty | Unknown reachability can coexist with `ok=true` and positive headline copy. | Separate placement and route outcomes; keep an unavailable route visibly unknown. |
-| Group height | Tallest-work height affects Discover ranking, but `evaluateGroup()` does not perform per-work local ceiling checks. | Add independent local-height checks and unknown states for group works. |
-| Venue budget | Costs are shared, user-entered, and do not constrain suggestions. | Store scoped quotes per candidate and calculate supported cost differences before claiming budget-aware optimization. |
-| Persistence | App/Workspace documents are held in component state. Leaving Workspace unmounts it; group poses, costs, order, locks, and history are not durably saved. | Persist a complete exhibition project and restore it across navigation/reload. Do not promise restoration today. |
-| Brief synchronization | Work specifications sync back; Workspace budget, costs, route order, and poses do not all sync into the brief. | Define a single project source of truth and test round trips. |
-| Switching modes | Single-work state and group state use different editing paths. | Verify size/identity synchronization before promising seamless switching. |
-| Group artwork assets | The group renderer uses dimensioned work geometry; per-work image/GLB assets are not connected. | Add per-work assets to both renderers. Correct onboarding's generic asset promise until then. |
-| Onboarding limit | Search accepts at most 12 works; the add button has no matching limit. | Explain/enforce the limit before submission. |
-| Evidence status | Group review currently uses a draft/review-pending presentation rather than the complete spatial verification model. | Derive evidence status separately from the computed layout result. |
-| Comparison summaries | “Elsewhere” checks are temporary summaries rather than saved alternate layouts. | Store results with a revision and invalidate them after relevant edits. |
-| Physical conditions | Strict verified-condition filters and hypothetical furniture removal are disabled. | Enable only with supported evidence and explicit scenario handling. |
+| Recommendation completeness | Agent verdicts use supported reason codes and a required-placement guard, not all route/height/evidence conditions. | Keep computed placement, unknown conditions, and readiness separate; strengthen the final gate. |
+| Unknown route | Group `ok` can coexist with null reachability. | Represent route unknown independently and avoid implying confirmed connectivity. |
+| Group height | Height facts are available, but the group engine does not perform per-work local-height suitability checks. | Add explicit height pass/fail/unknown with reviewed scope. |
+| Exact unit and geometry | A traced draft or building-level tour is not a verified exact-suite result. | Complete matching, obstacles, scale, and local-height review where evidence exists. |
+| Limits and empty lists | Search accepts 1–12 works; group editing API accepts 1–20; UI controls are not consistently bounded or nonempty across screens. | Align validation and removal/addition behavior. |
+| Agent handoff | Only poses are passed to Workspace, without the full proposed order, inquiry, version lineage, or saved project. | Transfer a scoped, versioned plan and verify it against current inputs. |
+| Persistence and modes | Session/component state, incomplete Brief synchronization, and separate solo/group editor paths. | Add one persistent project model and verify navigation/mode round trips. |
+| Costs | Shared entered costs, no venue-specific quote comparison or cost-constrained layout optimization. | Store dated scoped quotes and model only supported cost effects. |
+| Visitor estimates | Draft geometry and unverified exit assumptions underlie estimates. | Keep assumptions visible and obtain authoritative venue review. |
+| Report validation | Numeric-token membership is not semantic or comprehensive fact verification. | Strengthen statement-to-fact attribution and source validation if stronger claims are needed. |
+| Sharing and inquiry | Local exports and external-client handoff; no hosted link, in-app delivery, or live collaboration. | Implement those as distinct future capabilities rather than calling export a saved shared project. |
+| Physical condition filters | Strict filters and hypothetical furniture removal remain disabled. | Add evidence-backed behavior and explicit scenarios before enabling. |
+| Panel sizing | Hide/show and dock collapse are implemented; panel drag resizing is not. | Add bounded resizing only if needed for the product. |
 
-### Preferred Workspace layout — agreed direction, not current implementation
+## 14. Demonstration and acceptance checks
 
-The selected design direction is a **bottom dock that reserves its own layout space below the viewer**. Left and right panels should collapse and support bounded resizing; the dock should expand for editing and collapse for inspection. Keep controls opaque and readable rather than relying on transparency over a detailed scan.
+The demonstration story is **one exhibition → candidate comparison → one live constrained edit → a shareable plan**. Use the three-work Houston example, state the draft status, and show completed real agent results if a fresh model run would exceed the allotted time. A brief review is enough to explain onboarding without entering every field live.
 
-The current desktop implementation still places the panels and AI dock over the canvas. Panels can hide/reopen, but drag resizing and a collapsible, space-reserving dock are not implemented. The planning camera has inset compensation; that does not make the layout equivalent to an unobstructed viewer. Smaller layouts move panels and the dock into normal document flow.
+The current live-edit demo prompt is:
 
-## 11. Demonstration walkthrough
+> Keep Work 1 where it is and rearrange the rest so visitors see Work 3 first.
 
-Use actual loaded candidates and observed results. Do not hardcode candidate counts, successful placements, route lengths, or cost claims.
+Preview the route, open the loaded scan if a scan image is desired, then choose **Share plan**. Distinguish the report preview from the browser's actual PDF-save step. Prepared results or exports must be identified as prior real runs, not a newly executed operation.
 
-1. Start a brief and choose the supported research market and exhibition dates.
-2. Add three measured floor-standing works by two or three artists using **+ Add artwork**.
-3. Set shared viewing room, space preferences, and the total exhibition budget. Review all three works.
-4. Search the snapshot. Explain that largest-work area and tallest-work height are preliminary screens.
-5. Open a candidate with traced geometry. State whether the geometry and exact-suite match are reviewed.
-6. Inspect automatic group placement. Keep any unplaced required work or reported conflict visible.
-7. Select and lock one placed work. Ask AI to rearrange the rest, or use manual suggestions if AI is unavailable.
-8. Change the viewing order and inspect the route. If unavailable, show the reason rather than drawing a fictional path.
-9. Compare the available layout priorities and apply one. Use Undo to demonstrate reversibility.
-10. Check another opened space using the same work specifications. Explain that this is a fresh sampled layout check, not an automatic booking or a verified budget comparison.
-11. Show quoted, estimated, and unknown costs. Finish with the actual unresolved checks: exact-unit match, geometry, local height, physical conditions, dates, permission, load-in, and the venue quote as applicable.
+Before claiming end-to-end readiness, verify:
 
-## 12. Verification checklist
+- Multiple work IDs and dimensions survive Review, search, agent context, cards, and Workspace handoff.
+- No traced geometry produces no placement result; a tour-only candidate remains clearly tour-only.
+- LLM and deterministic modes are distinguished; agent reasons reflect the tested candidates and show gaps.
+- Imported poses correspond to the current works/geometry, and visiting order is handled according to the actual handoff.
+- Locks, manual movement, dragging, scan placement controls, and the multi-operation AI request produce the observed result or an explicit error.
+- Unplaced required works, collisions, missing routes, height unknowns, and unreviewed geometry remain visible.
+- Route playback and both appearance renderers work with the chosen assets/model.
+- Suggestion, AI-response, and comparison staleness do not silently reuse incompatible results.
+- Budget status preserves unknowns and does not invent short-term rates.
+- The report uses the active-space layout; optional images, narrative failure, and exports behave as labeled.
+- Inspect the saved PDF pages and downloaded PNG rather than assuming the buttons guarantee a correct file.
+- Navigation/reload behavior is described honestly, and placeholder contacts are not treated as verified operational leads.
 
-This is a review/acceptance checklist, not a statement that the checks have just passed.
+Existing tests include `geometry/test/group.test.ts`, `geometry/test/occupancy.test.ts`, `server/test/groupEdit.test.ts`, `server/test/briefWorks.test.ts`, `server/test/searchFit.test.ts`, `server/test/showAgent.test.ts`, and `server/test/report.test.ts`. `server/scripts/aiEval.ts` contains real-model evaluation cases. These sources exist; this documentation update does not claim they have all just been executed or that they replace a browser/export rehearsal.
 
-- Add two works to onboarding, edit dimensions, remove one, and confirm Review and the search payload retain the correct work IDs and specifications.
-- Confirm a multi-work brief opens Group show and starts without fabricated cost quotes.
-- Confirm area screening uses the largest footprint while height context uses the tallest work, including when they are different works.
-- Check listing exclusions, missing dates, readable counts, and the tour-only path.
-- Check initial placement, adding a new work, explicit unplaced-work reporting, and preservation of already placed works during the automatic addition attempt.
-- Check body collisions, shared viewing zones, required works, locks, and manual edits.
-- Check route order, unreachable standing points, absent entrances, and the independent presentation of unknown reachability.
-- Check suggested-layout invalidation, Undo/Redo, and rejection of stale AI replies.
-- Check costs with unknown items, estimates, over-budget quotes, and currency mismatch.
-- Check navigation away from Workspace and reload without assuming unsaved group state survives.
-- Confirm actual viewport behavior before claiming that the dock or panels leave the viewer unobstructed.
+## 15. Stack and API reference
 
-Existing test sources cover parts of these rules: `geometry/test/group.test.ts`, `server/test/groupEdit.test.ts`, `server/test/briefWorks.test.ts`, and `server/test/searchFit.test.ts`. Their presence does not substitute for testing the complete browser journey.
+The implemented stack is TypeScript, React, Vite, React Router, Node.js/Express, Three.js, React Three Fiber/Drei, Matterport SDK/webcomponent and Model API assistance, Anthropic SDK/Claude, JSON Schema/Zod checks, Vitest, and a browser Worker for the single-work scan. `polygon-clipping` supplies display overlays; core placement decisions use ArtFit's geometry code.
 
-## 13. Source map
+There is no implemented Amazon Bedrock/AWS or Hugging Face Spaces integration identified in this source baseline. Participation in a sponsor track does not establish use of that sponsor's infrastructure.
 
-Paths below are relative to the ArtFit repository root. The document records a working-tree snapshot; source may change afterward.
-
-| Source | Behavior inspected |
+| Route | Purpose |
 | --- | --- |
-| `web/src/App.tsx` | Screen state, brief/search handoff, stale-search key, selected candidate IDs, conditional Workspace mounting. |
-| `web/src/screens/Brief.tsx` | Six-step onboarding, `worksOf`, `largestWork`, `withWorks`, work list, review, total budget copy. |
-| `web/src/screens/Discover.tsx` | Runtime summaries, group-screening explanation, filters, traced candidates, tour-only entry. |
-| `web/src/screens/Workspace.tsx` | Auto-selected group mode, candidate loading, views, work synchronization, panel visibility, AI integration. |
-| `web/src/workspace/GroupStudio.tsx` | Group document/history, work controls, automatic placement, layout suggestions, route order, budget input, group AI operations. |
-| `web/src/workspace/ArtworkEditBar.tsx` | Separate single-work AI edit interface. |
-| `web/src/styles.css` | Current floating desktop panels/dock and smaller-screen flow layout. |
-| `geometry/src/types.ts` | Existing `BriefWork` and `ExhibitionBrief` contracts. |
-| `geometry/src/group.ts` | Group placement, shared viewing room, route preview, suggestion priorities, budget summary. |
-| `server/src/agent/tools.ts` | Brief validation, 1–12-work limit, snapshot candidate selection, area/height ranking, existing single-work alternatives. |
-| `server/src/agent/groupEdit.ts` | Group AI operation allowlist and interpretation. |
-| `server/src/agent/loop.ts` | Separate four-tool search agent. |
-| `server/src/index.ts` | Existing search, inspection, geometry, placement, agent, and Workspace edit routes. |
-| `web/src/main.tsx` | App routing and separate annotation route. |
+| `GET /api/health` | Data/server health. |
+| `GET /api/markets` | Runtime per-market listing/tour/tracing counts. |
+| `POST /api/spaces/search` | Snapshot candidate search with the brief. |
+| `GET /api/spaces/:id` | Candidate inspection, evidence, and contacts. |
+| `GET /api/spaces/:id/geometry` | Traced annotation and match/version context when available. |
+| `POST /api/agent/show` | Visible whole-exhibition planning agent. |
+| `POST /api/workspace/group-edit` | Group editing interpretation. |
+| `POST /api/workspace/edit` | Single-work editing interpretation. |
+| `POST /api/report/narrate` | Report narrative from submitted facts. |
+| `POST /api/placement/evaluate` | Existing single-work placement evaluation. |
+| `POST /api/agent/plan` | Existing single-work alternatives. |
+| `POST /api/agent/run` | Existing single-work search-agent loop. |
+| `GET /api/agent/status` | AI configuration status; its tool list describes the older search agent, not a complete inventory of all AI services. |
+
+The internal `/annotate/:spaceId` screen and annotation review routes are for tracing/review, not extra tools the ordinary exhibition agent can use to rewrite the building.
+
+## 16. Source map and changes from the previous document
+
+All paths below are relative to the ArtFit repository root.
+
+| Source | What this document derives from it |
+| --- | --- |
+| `web/src/App.tsx` | Screen state, search fingerprint, selected candidate IDs, agent-pose handoff, conditional mounting. |
+| `web/src/screens/Brief.tsx` | Market counts, dates, six-step work collection, defaults, `worksOf`, `largestWork`, `withWorks`, Review. |
+| `web/src/screens/Discover.tsx` | Catalogue, agent/skip states, ranked cards, layout previews, inquiry controls, candidate opening. |
+| `web/src/agent/ShowAgent.tsx` | NDJSON consumer, visible stages/results, mode and error presentation, `agentLayoutsOf`. |
+| `web/src/screens/Workspace.tsx` | Group initialization, syncing, assets, views, drag/scan controls, report capture and header action. |
+| `web/src/workspace/GroupStudio.tsx` | `GroupDoc`, history, work controls, initial layouts, automatic placement, route order, alternatives, budgets, AI operations. |
+| `web/src/workspace/ArtworkEditBar.tsx` | Single-work dock, supported edit surface, collapse and secondary information. |
+| `web/src/workspace/ScanMovePad.tsx` | In-view selection, increments, rotation, placement gating, and lock controls. |
+| `web/src/workspace/PlanReport.tsx` | Browser report facts, optional images, narrative request, report content, PDF print and PNG download. |
+| `web/src/components/SpaceInfo.tsx` | Listing/contact dialog, inquiry-prefilled or generic mailto, phone links, anonymization notice. |
+| `web/src/workspace/Occupancy.tsx` | Visitor estimate presentation and qualifications. |
+| `web/src/viewer/artworkModel.ts` | Photo/GLB importing and appearance normalization. |
+| `web/src/viewer/PlanningView.tsx` | Planning renderer, group artwork display, movement and route preview. |
+| `web/src/viewer/MatterportEmbed.tsx` | Scan scene, captured-viewpoint playback, focus, floor click, and image capture integration. |
+| `web/src/viewer/artworkScene.ts` | Objects rendered using the scan bundle's Three.js instance. |
+| `web/src/styles.css` | Reserved desktop panel/dock layout, disclosures, responsive flow, report/print and Move pad styling. |
+| `web/src/api.ts` | Existing normalized candidate/contact and API response contracts. |
+| `geometry/src/types.ts` | Internal brief/work, annotation, evidence-related, and evaluation types. |
+| `geometry/src/group.ts` | Group collisions, shared viewing room, sampled proposals, route ordering, null reachability, budget summaries. |
+| `geometry/src/engine.ts` | Existing single-work sampling, clearance, evaluation and vertical checks. |
+| `geometry/src/occupancy.ts` | Visitor estimate computation and assumptions. |
+| `server/src/adapters/costarKit.ts` | Local kit parsing, record joins, market/use/status context, and contact normalization. |
+| `server/src/agent/tools.ts` | Brief limits, candidate filtering/ranking, evidence status, existing single-work evaluation/alternatives. |
+| `server/src/agent/showAgent.ts` | Visible agent's four tools, shared group planner, structured reasons/ranking, inquiry rendering, bounded loop and fallback. |
+| `server/src/agent/groupEdit.ts` | Group request validation and operation allowlist. |
+| `server/src/agent/loop.ts` | Separate original four-tool agent, model configuration and tool execution. |
+| `server/src/agent/report.ts` | Narrative schema/prompt and numeric-token sentence filtering. |
+| `server/src/index.ts` | Registered API routes, streaming endpoints, market counts and review routes. |
+
+This edition removes the outdated statements that the group agent is absent from the UI, per-work group assets are unconnected, the dock only floats over the canvas, and sharing/export is not built. It adds the visible group agent, pose handoff, scan/drag controls, current simplified UI, report/PDF/PNG flow, contact/inquiry flow, and the precise limits of each.
 

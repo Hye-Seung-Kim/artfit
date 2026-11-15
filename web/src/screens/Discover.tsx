@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bbox, type SpatialAnnotation } from "@artfit/geometry";
+import { bbox, suggestGroupPlans, workBody, type BriefWork, type SpatialAnnotation } from "@artfit/geometry";
 import type { ExhibitionBrief } from "@artfit/geometry";
 import { api, monYear, type CandidateCard, type SearchResult } from "../api";
 import { largestWork, worksOf } from "./Brief";
+import { SpaceInfo } from "../components/SpaceInfo";
+import ShowAgent, { agentLayoutsOf, type AgentFinal, type AgentLayouts } from "../agent/ShowAgent";
+import type { Pose } from "@artfit/geometry";
 
 const IDLE_LABEL: Record<string, string> = { strong: "Strong long-idle signal", moderate: "Moderate long-idle signal", weak: "Weak long-idle signal", unknown: "Idle signal unknown" };
 const AREA_LABEL: Record<string, string> = {
@@ -33,7 +36,10 @@ function rateText(r: CandidateCard["rate"]) {
   return `${value} ${r.currency === "UnitedStatesDollar" ? "USD" : r.currency ?? "(currency unknown)"} / ${r.perUnit} / ${r.basis === "Yearly" ? "yr" : r.basis === "Monthly" ? "mo" : "period unknown"} · ${r.serviceType ?? "service type unknown"}`;
 }
 
-function PlanPreview({ c, onOpen }: { c: CandidateCard; onOpen?: () => void }) {
+const WORK_FILL = ["#171717", "#2f5d8a", "#9a4a24", "#4f6b3a", "#6b4f8a", "#7a6a1f"];
+
+/** Traced plan with the brief's works in a suggested layout (same automatic placement the studio starts from). */
+function PlanPreview({ c, onOpen, works, clearanceM, poses }: { c: CandidateCard; onOpen?: () => void; works: BriefWork[]; clearanceM: number; poses?: Record<string, Pose | null> | null }) {
   const [annotation, setAnnotation] = useState<SpatialAnnotation | null>(null);
   useEffect(() => {
     let current = true;
@@ -41,6 +47,15 @@ function PlanPreview({ c, onOpen }: { c: CandidateCard; onOpen?: () => void }) {
     return () => { current = false; };
   }, [c.id]);
   const bb = annotation?.floor.length ? bbox(annotation.floor) : null;
+  const wkey = JSON.stringify(works.map((w) => [w.id, w.widthM, w.depthM, w.clearanceM]));
+  const layout = useMemo(() => {
+    if (!annotation) return null;
+    const gw = works.map((w, i) => ({ id: w.id, artist: w.artist, title: w.title.trim() || `Work ${i + 1}`, widthM: w.widthM, depthM: w.depthM, heightM: w.heightM, clearanceM: w.clearanceM ?? clearanceM, required: w.required, locked: false, pose: null }));
+    if (poses) return { gw, plan: { poses } as { poses: Record<string, Pose | null> } };
+    const [plan] = suggestGroupPlans(annotation, gw, { priorities: ["room"], restarts: 6 });
+    return plan ? { gw, plan } : null;
+  }, [annotation, wkey, clearanceM, poses]); // eslint-disable-line react-hooks/exhaustive-deps
+  const artists = [...new Set(works.map((w) => w.artist.trim()))];
   const points = (p: { x: number; z: number }[]) => p.map((v) => `${v.x},${v.z}`).join(" ");
   const pad = bb ? Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ) * .13 : 1;
   const Tag = onOpen ? "button" : "div";
@@ -50,7 +65,17 @@ function PlanPreview({ c, onOpen }: { c: CandidateCard; onOpen?: () => void }) {
       const color = o.category === "entrance_zone" ? "#6bdcc5" : o.category === "uncertain_object" ? "#a9afa5" : "#4b5149";
       return o.shape.kind === "polygon" ? <polygon key={o.id} className="plan-obstacle" points={points(o.shape.poly)} fill={color} /> : <circle key={o.id} className="plan-obstacle" cx={o.shape.c.x} cy={o.shape.c.z} r={o.shape.r} fill={color} />;
     })}
-  </svg> : <span className="faint">Loading traced floor plan…</span>}<span className="plan-preview-label">{c.spatiallyVerified ? "Reviewed geometry" : "Draft geometry · review required"}</span>{onOpen && <span className="plan-open-cue" aria-hidden="true">Open in 3D →</span>}</Tag>;
+    {layout?.gw.map((w, i) => {
+      const pose = layout.plan.poses[w.id];
+      if (!pose) return null;
+      const k = (Math.max(bb.maxX - bb.minX, bb.maxZ - bb.minZ) + pad * 2) / 420;
+      return <g key={w.id} className="plan-work" style={{ "--i": i } as React.CSSProperties}>
+        <polygon points={points(workBody(w, pose))} fill={WORK_FILL[Math.max(0, artists.indexOf(w.artist.trim())) % WORK_FILL.length]} />
+        <text x={pose.x} y={pose.z} fontSize={k * 13} fill="#fff" textAnchor="middle" dominantBaseline="central" fontWeight={700}>{i + 1}</text>
+      </g>;
+    })}
+  </svg> : <span className="faint">Loading traced floor plan…</span>}<span className="plan-legend">{layout && <>{layout.gw.map((w, i) => <span key={w.id}><b style={{ background: WORK_FILL[Math.max(0, artists.indexOf(w.artist.trim())) % WORK_FILL.length] }}>{i + 1}</b>{w.title}{layout.plan.poses[w.id] ? "" : " (no room)"}</span>)}</>}<span><i className="lg-door" />Doorway</span></span>
+    <span className="plan-preview-label">{layout ? (poses ? "The agent’s layout · " : "Suggested layout · ") : ""}{c.spatiallyVerified ? "reviewed geometry" : "draft floor plan, review required"}</span>{onOpen && <span className="plan-open-cue" aria-hidden="true">Open in 3D →</span>}</Tag>;
 }
 
 /** How the listing compares with the works ON PAPER (listed area and building-level ceiling). Never a fit verdict. */
@@ -91,11 +116,24 @@ function CountUp({ value, delayMs = 0 }: { value: number; delayMs?: number }) {
   return <><span aria-hidden="true">{shown.toLocaleString()}</span><span className="sr-only">{value.toLocaleString()}</span></>;
 }
 
-export function SpaceCard({ c, onOpen, onTour, slot, featured = false, tallestM, group = false }: { c: CandidateCard; onOpen?: () => void; onTour?: () => void; slot?: string; featured?: boolean; tallestM: number; group?: boolean }) {
+type AgentView = { rank: number; verdict: string; reasons: string[]; inquiry: string | null; poses: Record<string, Pose | null> | null };
+export function SpaceCard({ c, onOpen, onTour, slot, featured = false, tallestM, group = false, works = [], clearanceM = 1, agent }: { c: CandidateCard; onOpen?: () => void; onTour?: () => void; slot?: string; featured?: boolean; tallestM: number; group?: boolean; works?: BriefWork[]; clearanceM?: number; agent?: AgentView | null }) {
+  const [copied, setCopied] = useState(false);
+  const [info, setInfo] = useState(false);
+  const infoDialog = info && <SpaceInfo onClose={() => setInfo(false)} data={{ name: c.displayName, address: c.address, use: USE_LABELS[c.spaceUse ?? ""] ?? c.spaceUse, listedSqFt: c.listedAreaSqFt,
+    availability: c.availableOnDate ? c.availableOnDate.slice(0, 10) : c.availabilityType ? `${c.availabilityType} (relative)` : null, rate: rateText(c.rate), ceilingM: c.ceilingHeightM,
+    monthsOnMarket: c.monthsOnMarket, brokerageCompany: c.brokerageCompany, contacts: c.contacts ?? [], inquiry: agent?.inquiry ?? null }} />;
   return <article className={"card space-card reveal" + (featured ? " featured" : "")}>
-    <div className="space-title-row"><div><span className="space-type">{USE_LABELS[c.spaceUse ?? ""] ?? c.spaceUse ?? "Use not reported"}</span><h3>{c.displayName}</h3></div>{slot && <span className="catalogue-slot" aria-label={`Candidate ${slot}`}>{slot}</span>}</div>
-    <p className="space-meta">{c.address ?? "Address not reported"}</p>
-    {featured && c.hasAnnotation && <PlanPreview c={c} onOpen={onOpen} />}
+    <div className="space-title-row"><div><span className="space-type">{USE_LABELS[c.spaceUse ?? ""] ?? c.spaceUse ?? "Use not reported"}</span><h3><button type="button" className="name-link" onClick={() => setInfo(true)} aria-haspopup="dialog">{c.displayName}</button></h3></div>{slot && <span className="catalogue-slot" aria-label={`Candidate ${slot}`}>{slot}</span>}</div>
+    <p className="space-meta">{c.address ?? "Address not reported"}{c.contacts?.[0] ? <> · <button type="button" className="text-button contact-link" onClick={() => setInfo(true)}>Contact {c.contacts[0].company ?? "the broker"}</button></> : null}</p>
+    {infoDialog}
+    {agent && <div className={"agent-verdict " + agent.verdict}>
+      <div className="av-head"><span className="av-label">AI agent · #{agent.rank}</span><span className={"sa-verdict " + agent.verdict}>{agent.verdict === "recommended" ? "Recommended" : agent.verdict === "possible" ? "Possible" : "Not recommended"}</span></div>
+      <ul>{agent.reasons.map((t) => <li key={t}>{t}</li>)}</ul>
+      {agent.inquiry && <div className="row"><button type="button" onClick={() => navigator.clipboard.writeText(agent.inquiry!).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}>{copied ? "Copied ✓" : "Copy owner inquiry"}</button>
+        <details className="sa-inquiry"><summary>Read the inquiry</summary><pre>{agent.inquiry}</pre></details></div>}
+    </div>}
+    {featured && c.hasAnnotation && <PlanPreview c={c} onOpen={onOpen} works={works} clearanceM={clearanceM} poses={agent?.poses ?? null} />}
     {featured && c.hasAnnotation && <p className={"geometry-status" + (c.spatiallyVerified ? " verified" : "")}>{c.spatiallyVerified ? "Spatially verified: exact unit match, reviewed tracing and scale check." : "Placement results here are exploratory until the unit match and the tracing are reviewed."}</p>}
     <div className="space-facts"><div><span className="fact-label">Advertised area</span><span className="space-area">{c.listedAreaSqFt != null ? c.listedAreaSqFt.toLocaleString() : "—"}<small>{c.listedAreaSqFt != null ? "SF" : "Not reported"}</small></span></div><div><span className="fact-label">Reported availability</span><span className="fact-value">{c.availableOnDate ? c.availableOnDate.slice(0, 10) : c.availabilityType ? `${c.availabilityType} · relative` : "Date not confirmed"}</span></div></div>
     <ul className="space-fit" aria-label="Compared with your work on paper">{paperFit(c, tallestM, group).map((l) => <li key={l.text} className={l.tone}>{l.text}</li>)}</ul>
@@ -112,7 +150,7 @@ export function SpaceCard({ c, onOpen, onTour, slot, featured = false, tallestM,
   </article>;
 }
 
-export default function Discover({ result, brief, briefChanged, onSearchAgain, searching, onOpen, onBack }: { result: SearchResult; brief: ExhibitionBrief; briefChanged: boolean; onSearchAgain: () => void; searching: boolean; onOpen: (ids: string[]) => void; onBack: () => void }) {
+export default function Discover({ result, brief, briefChanged, onSearchAgain, searching, onOpen, onBack }: { result: SearchResult; brief: ExhibitionBrief; briefChanged: boolean; onSearchAgain: () => void; searching: boolean; onOpen: (ids: string[], layouts?: AgentLayouts) => void; onBack: () => void }) {
   const works = worksOf(brief);
   const isGroup = works.length > 1;
   const big = largestWork(works);
@@ -122,13 +160,26 @@ export default function Discover({ result, brief, briefChanged, onSearchAgain, s
   const [filter, setFilter] = useState<"all" | "scan" | "traced">("all");
   const [limit, setLimit] = useState(12);
   const f = result.funnel;
-  const traced = result.candidates.filter((c) => c.hasAnnotation);
+  const [agentFinal, setAgentFinal] = useState<AgentFinal | null>(null);
+  const [skipped, setSkipped] = useState(false);
+  const agentRank = (id: string) => agentFinal ? agentFinal.ranking.findIndex((r) => r.spaceId === id) : -1;
+  const traced = result.candidates.filter((c) => c.hasAnnotation).sort((a, b) => {
+    const ra = agentRank(a.id), rb = agentRank(b.id);
+    return (ra < 0 ? 99 : ra) - (rb < 0 ? 99 : rb);
+  });
+  const agentFor = (id: string): AgentView | null => {
+    if (!agentFinal) return null;
+    const i = agentRank(id), r = agentFinal.ranking[i];
+    if (!r) return null;
+    return { rank: i + 1, verdict: r.verdict, reasons: r.reasons, inquiry: agentFinal.inquiries.find((q) => q.spaceId === id)?.text ?? null, poses: r.layoutKey ? agentFinal.layouts[r.layoutKey]?.poses ?? null : null };
+  };
+  const layoutsNow = agentFinal ? agentLayoutsOf(agentFinal) : undefined;
   const filtered = useMemo(() => result.candidates.filter((c) => filter === "all" || (filter === "scan" ? c.matterportModelCount > 0 : c.hasAnnotation)), [result, filter]);
   const shown = filtered.slice(0, limit);
   const cond = conditionNote(result.conditionBuckets.vacancyEvidence.N, result.conditionBuckets.furnitureEvidence.N);
   const anyDraft = traced.some((c) => !c.spatiallyVerified);
   const allDraft = traced.length > 0 && traced.every((c) => !c.spatiallyVerified);
-  const open = (id: string) => onOpen([id, ...traced.filter((t) => t.id !== id).map((t) => t.id)]);
+  const open = (id: string) => onOpen([id, ...traced.filter((t) => t.id !== id).map((t) => t.id)], layoutsNow);
   // Scroll reveal: headings and cards rise in as they enter the view (cards in a row are staggered).
   const mainRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -145,7 +196,7 @@ export default function Discover({ result, brief, briefChanged, onSearchAgain, s
       io.observe(e);
     }
     return () => io.disconnect();
-  }, [shown.length, filter, traced.length]);
+  }, [shown.length, filter, traced.length, !!agentFinal, skipped]);
   return <main className="page discover-page" id="main-content" ref={mainRef}>
     <div className="discover-hero"><div><div className="eyebrow">02 / Spaces</div><h1>Spaces for<br />your show.</h1></div><div className="discover-summary"><p>These listings match your brief. See what’s known and what still needs checking for each one, then open a space in 3D to plan the show.</p><button className="text-button" onClick={onBack}>← Edit your brief</button></div></div>
     <section className="results-summary" aria-label="Search summary">
@@ -173,7 +224,8 @@ export default function Discover({ result, brief, briefChanged, onSearchAgain, s
         </dl>
       </details>
     </section>
-    {traced.length > 0 && <section className="catalogue-section" aria-labelledby="traced-heading"><div className="catalogue-heading reveal"><div><div className="eyebrow">A closer look</div><h2 id="traced-heading">Spaces in the studio.</h2><p className="faint">{allDraft ? "Traced floor plans are ready for a placement study. Comparing them is exploratory; it doesn’t mean either space fits or has been verified." : anyDraft ? "Traced floor plans are ready for a placement study. Their review status differs, so check each space below; comparing them doesn’t mean they fit." : "Traced floor plans with completed spatial verification. A fit still depends on the placement study."}</p></div><button className="primary" onClick={() => onOpen(traced.map((c) => c.id))}>{isGroup ? (traced.length > 1 ? `Plan the show in ${traced.length} spaces` : "Plan the show") : traced.length > 1 ? `Compare ${traced.length} spaces` : "Open workspace"}<span aria-hidden="true">↗</span></button></div><div className="cards">{traced.map((c, i) => <SpaceCard key={c.id} c={c} featured slot={String.fromCharCode(65 + i)} onOpen={() => open(c.id)} tallestM={tallestM} group={isGroup} />)}</div></section>}
+    {traced.length > 0 && !briefChanged && <ShowAgent brief={brief} onFinal={setAgentFinal} onSkip={() => setSkipped(true)} done={!!agentFinal || skipped} />}
+    {traced.length > 0 && (agentFinal || skipped || briefChanged) && <section className="catalogue-section" aria-labelledby="traced-heading"><div className="catalogue-heading reveal"><div><div className="eyebrow">A closer look</div><h2 id="traced-heading">Spaces in the studio.</h2><p className="faint">{allDraft ? "Traced floor plans are ready for a placement study. Comparing them is exploratory; it doesn’t mean either space fits or has been verified." : anyDraft ? "Traced floor plans are ready for a placement study. Their review status differs, so check each space below; comparing them doesn’t mean they fit." : "Traced floor plans with completed spatial verification. A fit still depends on the placement study."}</p></div><button className="primary" onClick={() => onOpen(traced.map((c) => c.id), layoutsNow)}>{isGroup ? (traced.length > 1 ? `Plan the show in ${traced.length} spaces` : "Plan the show") : traced.length > 1 ? `Compare ${traced.length} spaces` : "Open workspace"}<span aria-hidden="true">↗</span></button></div><div className="cards">{traced.map((c, i) => <SpaceCard key={c.id} c={c} works={works} clearanceM={brief.preferredClearanceM} agent={agentFor(c.id)} featured slot={String.fromCharCode(65 + i)} onOpen={() => open(c.id)} tallestM={tallestM} group={isGroup} />)}</div></section>}
     <section className="catalogue-section" aria-labelledby="all-leads-heading"><div className="catalogue-heading reveal"><div><div className="eyebrow">The wider search</div><h2 id="all-leads-heading">All marketed spaces.</h2></div><div className="filter-tabs" role="group" aria-label="Filter spaces">{(["all", "scan", "traced"] as const).map((k) => <button key={k} aria-pressed={filter === k} className={filter === k ? "on" : ""} onClick={() => { setFilter(k); setLimit(12); }}>{k === "all" ? "All spaces" : k === "scan" ? "With a 3D tour" : "Traced geometry"}</button>)}</div></div><p className="faint catalogue-help">Ranked: room on paper for your work first, then whether the listed ceiling clears your tallest work, then the long-idle signal and time on market. This is not evidence of current vacancy. Below-area leads remain available for review. Showing {shown.length} of {filtered.length} {filter === "all" ? "marketed records" : "matching records"}.</p>
       {shown.length ? <div className="cards">{shown.map((c) => <SpaceCard key={c.id} c={c} onOpen={c.hasAnnotation ? () => open(c.id) : undefined} onTour={c.matterportModelCount > 0 ? () => onOpen([c.id]) : undefined} tallestM={tallestM} group={isGroup} />)}</div> : <div className="empty-state"><h3>No spaces in this selection.</h3><p className="muted">Try another view or edit your brief. Missing evidence never becomes a verified match.</p><button className="text-button" onClick={onBack}>Edit brief →</button></div>}
       {filtered.length > shown.length && <div className="load-more"><button onClick={() => setLimit((n) => n + 12)}>Show more spaces <span aria-hidden="true">↓</span></button></div>}
